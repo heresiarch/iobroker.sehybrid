@@ -23,7 +23,16 @@
 
         /* Allow importing the shared, pure logic from the adapter's src/lib */
         "esModuleInterop": true,
-        "allowSyntheticDefaultImports": true
+        "allowSyntheticDefaultImports": true,
+
+        /*
+         * Only auto-include these @types packages. Without this, TypeScript scans every
+         * @types/* it finds while walking node_modules and pulls in transitive stubs like
+         * @types/babel__core or @types/parse-json, some of which are incomplete and produce
+         * "Cannot find type definition file for ..." errors in the IDE. Everything else is
+         * resolved through normal imports, so restricting this list is safe.
+         */
+        "types": ["react", "react-dom", "node"]
     },
     "include": ["src", "../src/lib/adapter-config.d.ts"]
 }
