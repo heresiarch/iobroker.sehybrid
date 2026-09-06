@@ -19,6 +19,14 @@
         // This is necessary for the automatic typing of the adapter config
         "resolveJsonModule": true,
 
+        // The base config (@tsconfig/node22) sets "types": ["node"], which narrows
+        // auto-inclusion of @types/* packages. Re-declare it here to also make the
+        // test runner globals (describe/it) and chai assertions available during
+        // ts-node type checking. The global ioBroker namespace is resolved via the
+        // @iobroker/adapter-core -> @iobroker/types import chain, not this array,
+        // so ioBroker.AdapterConfig augmentation is unaffected.
+        "types": ["node", "mocha", "chai"],
+
         // If you want to disable the stricter type checks (not recommended), uncomment the following line
         // "strict": false,
         // And enable some of those features for more fine-grained control

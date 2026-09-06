@@ -52,13 +52,14 @@
         "platform": "Javascript/Node.js",
         "icon": "sehybrid.png",
         "enabled": true,
-        "extIcon": "https://raw.githubusercontent.com/rmey/ioBroker.sehybrid/main/admin/sehybrid.png",
-        "readme": "https://github.com/rmey/ioBroker.sehybrid/blob/main/README.md",
+        "extIcon": "https://raw.githubusercontent.com/heresiarch/ioBroker.sehybrid/main/admin/sehybrid.png",
+        "readme": "https://github.com/heresiarch/ioBroker.sehybrid/blob/main/README.md",
         "loglevel": "info",
         "tier": 3,
         "mode": "daemon",
         "type": "energy",
         "compact": true,
+        "messagebox": true,
         "connectionType": "local",
         "dataSource": "poll",
         "adminUI": {
@@ -96,8 +97,10 @@
         ]
     },
     "native": {
-        "option1": true,
-        "option2": "42"
+        "host": "",
+        "port": 502,
+        "unitId": 1,
+        "pollInterval": 30
     },
     "objects": [],
     "instanceObjects": [
