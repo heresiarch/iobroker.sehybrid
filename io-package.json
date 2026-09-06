@@ -63,8 +63,8 @@
         "connectionType": "local",
         "dataSource": "poll",
         "adminUI": {
-            "config": "materialize",
-            "tab": "materialize"
+            "config": "html",
+            "tab": "html"
         },
         "adminTab": {
             "singleton": true,
@@ -81,7 +81,7 @@
                 "uk": "Налаштування примірника",
                 "zh-cn": "实例设置"
             },
-            "link": ""
+            "link": "tab.html"
         },
         "supportCustoms": true,
         "eraseOnUpload": true,

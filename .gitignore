@@ -19,5 +19,12 @@ Thumbs.db
 admin/i18n/flat.txt
 admin/i18n/*/flat.txt
 
+# admin UI Vite intermediate build (the copied result in admin/ is committed)
+src-admin/build/
+
+# bundle analyzer output (ANALYZE=1 npm run build in src-admin)
+src-admin/stats.html
+admin/stats.html
+
 #input
 /input/

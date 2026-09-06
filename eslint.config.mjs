@@ -17,9 +17,14 @@ export default [
             'admin/words.js',
             'admin/admin.d.ts',
             'admin/blockly.js',
+            'admin/assets/**',
+            'admin/index.html',
+            'admin/tab.html',
             '**/adapter-config.d.ts',
             'widgets/**/*.js',
-            'admin/build'
+            // The admin UI is a self-contained Vite project with its own eslint config.
+            'src-admin/**',
+            'tasks.js',
         ],
     },
     {

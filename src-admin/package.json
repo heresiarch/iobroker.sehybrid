@@ -1,0 +1,33 @@
+{
+    "name": "sehybrid-admin",
+    "version": "0.0.1",
+    "private": true,
+    "type": "module",
+    "homepage": ".",
+    "dependencies": {
+        "@emotion/react": "^11.14.0",
+        "@emotion/styled": "^11.14.0",
+        "@iobroker/adapter-react-v5": "^7.6.4",
+        "@mui/icons-material": "^6.4.11",
+        "@mui/material": "^6.4.11",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1"
+    },
+    "devDependencies": {
+        "@iobroker/eslint-config": "^2.3.4",
+        "@types/react": "^18.3.12",
+        "@types/react-dom": "^18.3.1",
+        "@vitejs/plugin-react": "^4.3.4",
+        "globals": "^17.6.0",
+        "rollup-plugin-visualizer": "^5.14.0",
+        "typescript": "~5.9.3",
+        "vite": "^6.0.7"
+    },
+    "scripts": {
+        "start": "vite",
+        "build": "vite build",
+        "watch": "vite build --watch --config vite.config.watch.ts",
+        "lint": "eslint -c eslint.config.mjs .",
+        "check": "tsc --noEmit"
+    }
+}
