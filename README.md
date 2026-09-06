@@ -57,29 +57,75 @@ When creating state objects, it is important to use the correct role for the sta
 
 **Important:** Do not invent your own custom role names. If you need a role that is not part of the official list, please contact the ioBroker developer community for guidance and discussion about adding new roles.
 
+### Project layout
+The adapter is split into two independent parts:
+
+* **Backend** (the actual adapter) — TypeScript in `src/`, compiled with `build-adapter ts` into `build/`.
+* **Admin UI** (the configuration page) — a self-contained [Vite](https://vitejs.dev/) + React + TypeScript
+  project in `src-admin/`. It is built and copied into `admin/` (as `admin/index.html`, `admin/tab.html`
+  and `admin/assets/*`) by the root-level `tasks.js` orchestrator.
+
+The admin UI has its own `package.json` and `node_modules`, so it is installed and linted separately from the
+backend. `npm run lint` and `npm run check` cover both parts.
+
+### Building and running in development
+
+Install dependencies (this only installs the backend; the admin UI is installed automatically on first build):
+
+```bash
+npm install
+```
+
+Build everything (backend + admin UI):
+
+```bash
+npm run build
+```
+
+Run the adapter locally with `dev-server` (starts ioBroker admin on http://localhost:8081 and your adapter):
+
+```bash
+npm run dev-server
+```
+
+Then open the `sehybrid` instance configuration from the admin UI at http://localhost:8081 to see your
+admin page. `dev-server` runs the admin UI in watch mode, so changes to `src-admin/` are rebuilt
+automatically — just refresh the browser.
+
+> The `dev-server` script runs with `--noBrowserSync` on purpose. BrowserSync (automatic browser reload)
+> interferes with the admin socket.io connection in this setup, causing the UI to reconnect endlessly and
+> load slowly. Without it, the admin WebSocket connects directly and reliably; the only cost is that you
+> refresh the browser manually after a change. If you want to try the auto-reload variant, use
+> `npm run dev-server:sync`.
+
 ### Scripts in `package.json`
-Several npm scripts are predefined for your convenience. You can run them using `npm run <scriptname>`
+Run them using `npm run <scriptname>`
+
 | Script name | Description |
 |-------------|-------------|
-| `build` | Compile the TypeScript and React sources. |
-| `watch` | Compile the TypeScript and React sources and watch for changes. |
-| `build:ts` | Compile the TypeScript sources. |
-| `watch:ts` | Compile the TypeScript sources and watch for changes. |
-| `build:react` | Compile the React sources. |
-| `watch:react` | Compile the React sources and watch for changes. |
-| `test:ts` | Executes the tests you defined in `*.test.ts` files. |
-| `test:package` | Ensures your `package.json` and `io-package.json` are valid. |
-| `test:integration` | Tests the adapter startup with an actual instance of ioBroker. |
-| `test` | Performs a minimal test run on package files and your tests. |
-| `check` | Performs a type-check on your code (without compiling anything). |
-| `lint` | Runs `ESLint` to check your code for formatting errors and potential bugs. |
-| `translate` | Translates texts in your adapter to all required languages, see [`@iobroker/adapter-dev`](https://github.com/ioBroker/adapter-dev#manage-translations) for more details. |
-| `release` | Creates a new release, see [`@alcalzone/release-script`](https://github.com/AlCalzone/release-script#usage) for more details. |
+| `build` | Build the backend (TypeScript) and the admin UI (Vite). |
+| `build:ts` | Build only the backend TypeScript sources into `build/`. |
+| `build:react` | Build only the admin UI (`src-admin/`) and copy it into `admin/`. |
+| `watch:ts` | Rebuild the backend on change. |
+| `watch:react` | Rebuild the admin UI on change (Vite watch, output straight into `admin/`). |
+| `dev-server` | Run ioBroker + the adapter locally with admin on http://localhost:8081 (no BrowserSync). |
+| `dev-server:sync` | Same as `dev-server`, but with BrowserSync auto-reload enabled. |
+| `dev-server:watch` | Run ioBroker and start the adapter in watch mode (auto-restart on backend changes). |
+| `dev-server:upload` | Upload the current adapter (needed after `io-package.json` changes). |
+| `test:ts` | Run the `*.test.ts` unit tests. |
+| `test:package` | Validate `package.json` and `io-package.json`. |
+| `test:integration` | Test adapter startup against a real ioBroker instance. |
+| `test` | Run the unit tests and package validation. |
+| `check` | Type-check the backend and the admin UI (no compilation). |
+| `lint` | Lint the backend and the admin UI with ESLint. |
+| `translate` | Translate admin texts to all languages, see [`@iobroker/adapter-dev`](https://github.com/ioBroker/adapter-dev#manage-translations). |
+| `release` | Create a new release, see [`@alcalzone/release-script`](https://github.com/AlCalzone/release-script#usage). |
 
 ### Configuring the compilation
-The adapter template uses [esbuild](https://esbuild.github.io/) to compile TypeScript and/or React code. You can configure many compilation settings 
-either in `tsconfig.json` or by changing options for the build tasks. These options are described in detail in the
-[`@iobroker/adapter-dev` documentation](https://github.com/ioBroker/adapter-dev#compile-adapter-files).
+The backend is compiled with [esbuild](https://esbuild.github.io/) via `@iobroker/adapter-dev`; adjust its
+settings in `tsconfig.json` / `tsconfig.build.json`. The admin UI is bundled with [Vite](https://vitejs.dev/);
+its configuration lives in `src-admin/vite.config.ts` (production build) and `src-admin/vite.config.watch.ts`
+(watch build used by `dev-server`).
 
 ### Writing tests
 When done right, testing code is invaluable, because it gives you the 
@@ -108,16 +154,15 @@ To get your adapter released in ioBroker, please refer to the documentation
 of [ioBroker.repositories](https://github.com/ioBroker/ioBroker.repositories#requirements-for-adapter-to-get-added-to-the-latest-repository).
 
 ### Test the adapter manually with dev-server
-Since you set up `dev-server`, you can use it to run, test and debug your adapter.
+Use `dev-server` to run, test and debug the adapter locally:
 
-You may start `dev-server` by calling from your dev directory:
 ```bash
-dev-server watch
+npm run dev-server
 ```
 
-The ioBroker.admin interface will then be available at http://localhost:undefined/
-
-Please refer to the [`dev-server` documentation](https://github.com/ioBroker/dev-server#command-line) for more details.
+The ioBroker admin interface is then available at http://localhost:8081. Use `npm run dev-server:watch` if you
+also want the backend to auto-restart when you change `src/`. Please refer to the
+[`dev-server` documentation](https://github.com/ioBroker/dev-server#command-line) for more details.
 
 ## Changelog
 <!--
