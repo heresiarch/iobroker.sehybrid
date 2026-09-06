@@ -82,15 +82,18 @@ Build everything (backend + admin UI):
 npm run build
 ```
 
-Run the adapter locally with `dev-server` (starts ioBroker admin on http://localhost:8081 and your adapter):
+Run ioBroker locally with `dev-server` (starts the admin on http://localhost:8081):
 
 ```bash
-npm run dev-server
+npm run dev-server      # admin-UI work: admin only, adapter not started
+npm run dev-server:watch  # backend work: also runs the adapter and restarts it on src/ changes
 ```
 
 Then open the `sehybrid` instance configuration from the admin UI at http://localhost:8081 to see your
-admin page. `dev-server` runs the admin UI in watch mode, so changes to `src-admin/` are rebuilt
-automatically — just refresh the browser.
+admin page. Both commands run the admin UI in watch mode, so changes to `src-admin/` are rebuilt
+automatically — just refresh the browser. Use `dev-server:watch` when you are changing backend code in
+`src/`, so the recompiled adapter restarts automatically. Plain `dev-server` only starts the admin and does
+not run the adapter, which is lighter when you are only working on the admin page.
 
 > The `dev-server` script runs with `--noBrowserSync` on purpose. BrowserSync (automatic browser reload)
 > interferes with the admin socket.io connection in this setup, causing the UI to reconnect endlessly and
@@ -108,9 +111,9 @@ Run them using `npm run <scriptname>`
 | `build:react` | Build only the admin UI (`src-admin/`) and copy it into `admin/`. |
 | `watch:ts` | Rebuild the backend on change. |
 | `watch:react` | Rebuild the admin UI on change (Vite watch, output straight into `admin/`). |
-| `dev-server` | Run ioBroker + the adapter locally with admin on http://localhost:8081 (no BrowserSync). |
+| `dev-server` | Run ioBroker admin on http://localhost:8081 for admin-UI development (adapter itself is not started; no BrowserSync). |
 | `dev-server:sync` | Same as `dev-server`, but with BrowserSync auto-reload enabled. |
-| `dev-server:watch` | Run ioBroker and start the adapter in watch mode (auto-restart on backend changes). |
+| `dev-server:watch` | Run ioBroker **and** the adapter in watch mode — backend recompiles and the adapter restarts on changes to `src/`. |
 | `dev-server:upload` | Upload the current adapter (needed after `io-package.json` changes). |
 | `test:ts` | Run the `*.test.ts` unit tests. |
 | `test:package` | Validate `package.json` and `io-package.json`. |
