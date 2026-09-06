@@ -3,6 +3,7 @@
 !.vscode/
 !.github/
 !.devcontainer/
+!.kiro/
 
 *.code-workspace
 node_modules
