@@ -43,7 +43,7 @@
             "uk": "Адаптер ioBroker для моніторингу та керування гібридними інверторами SolarEdge. Надає доступ до PV, акумулятора та робочих даних із такими функціями, як обмеження потужності експорту та режими керування зберіганням.",
             "zh-cn": "ioBroker 适配器，用于监控和控制 SolarEdge 混合逆变器。提供对光伏、电池和运行数据的访问，具有输出功率限制和存储控制模式等功能。"
         },
-        "authors": ["René Meyer <rene.meyer01@online.de>"],
+        "authors": ["René Meyer"],
         "keywords": ["SolarEdge Hybrid Adapter iobroker"],
         "licenseInformation": {
             "type": "free",

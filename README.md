@@ -1,4 +1,4 @@
-# WORK IN PROGRESS - USE ONLY AT YOUR OWN RIKS #
+# WORK IN PROGRESS - USE ONLY AT YOUR OWN RISK!!! #
 
 
 ![Logo](admin/sehybrid.png)
@@ -131,7 +131,7 @@ Please refer to the [`dev-server` documentation](https://github.com/ioBroker/dev
 ## License
 MIT License
 
-Copyright (c) 2026 René Meyer <rene.meyer01@online.de>
+Copyright (c) 2026 René Meyer
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
