@@ -13,10 +13,10 @@
 
 import { expect } from 'chai';
 import fc from 'fast-check';
-import type { ChannelId, IStateManager, StateManagerAdapter } from './state-manager';
+import type { ChannelPath, IStateManager, StateManagerAdapter } from './state-manager';
 import { StateManager } from './state-manager';
 import type { SunSpecRegisterDef } from './sunspec-map';
-import { getInverterValueDefs, getMeterValueDefs, getValueDefs } from './sunspec-map';
+import { getBatteryValueDefs, getInverterValueDefs, getMeterValueDefs, getValueDefs } from './sunspec-map';
 
 // ---------------------------------------------------------------------------
 // Mock adapter
@@ -81,17 +81,18 @@ class MockAdapter implements StateManagerAdapter {
 // ---------------------------------------------------------------------------
 
 /**
- * Inverter models 101/102/103 -> 'inverter'; meter models 201–204 -> 'meter'.
+ * Inverter models 101/102/103 -> 'inverter'; meter models 201–204 -> 'meter.1'.
  *
  * @param def
  */
-function channelForDef(def: SunSpecRegisterDef): ChannelId {
-    return def.model === 201 || def.model === 202 || def.model === 203 || def.model === 204 ? 'meter' : 'inverter';
+function channelForDef(def: SunSpecRegisterDef): ChannelPath {
+    return def.model === 201 || def.model === 202 || def.model === 203 || def.model === 204 ? 'meter.1' : 'inverter';
 }
 
 const allValueDefs = getValueDefs();
 const inverterValueDefs = getInverterValueDefs();
 const meterValueDefs = getMeterValueDefs();
+const allBatteryValueDefs = getBatteryValueDefs();
 
 describe('state-manager => StateManager', () => {
     // --------------------------------------------------------------------
@@ -181,14 +182,20 @@ describe('state-manager => StateManager', () => {
             expect((obj!.common as ioBroker.ChannelCommon).name).to.equal('Inverter');
         });
 
-        it("creates the 'meter' channel object with type 'channel' and name 'Meter'", async () => {
+        it("creates the 'meter.1' channel (type 'channel', name 'Meter 1') under a 'meter' folder", async () => {
             const adapter = new MockAdapter();
             const manager = new StateManager(adapter);
-            await manager.ensureChannel('meter');
-            const obj = adapter.objects.get('meter');
+            await manager.ensureChannel('meter.1');
+
+            const parent = adapter.objects.get('meter');
+            expect(parent).to.not.equal(undefined);
+            expect(parent!.type).to.equal('folder');
+            expect((parent!.common as ioBroker.ChannelCommon).name).to.equal('Meter');
+
+            const obj = adapter.objects.get('meter.1');
             expect(obj).to.not.equal(undefined);
             expect(obj!.type).to.equal('channel');
-            expect((obj!.common as ioBroker.ChannelCommon).name).to.equal('Meter');
+            expect((obj!.common as ioBroker.ChannelCommon).name).to.equal('Meter 1');
         });
     });
 
@@ -293,12 +300,12 @@ describe('state-manager => StateManager', () => {
             expect(adapter.objects.has(`inverter.${def.name}`)).to.equal(true);
         });
 
-        it("places meter defs under 'meter.<name>'", async () => {
+        it("places meter defs under 'meter.1.<name>'", async () => {
             const adapter = new MockAdapter();
             const manager = new StateManager(adapter);
             const def = meterValueDefs[0];
-            await manager.ensureState('meter', def);
-            expect(adapter.objects.has(`meter.${def.name}`)).to.equal(true);
+            await manager.ensureState('meter.1', def);
+            expect(adapter.objects.has(`meter.1.${def.name}`)).to.equal(true);
         });
 
         it('writes inverter and meter values under their respective channels', async () => {
@@ -308,10 +315,104 @@ describe('state-manager => StateManager', () => {
             const meterDef = meterValueDefs[0];
 
             await manager.writeValue('inverter', invDef, 1);
-            await manager.writeValue('meter', meterDef, 2);
+            await manager.writeValue('meter.1', meterDef, 2);
 
             expect(adapter.writesFor(`inverter.${invDef.name}`).length).to.equal(1);
-            expect(adapter.writesFor(`meter.${meterDef.name}`).length).to.equal(1);
+            expect(adapter.writesFor(`meter.1.${meterDef.name}`).length).to.equal(1);
+        });
+    });
+
+    // --------------------------------------------------------------------
+    // Task 18.2 — Property 12: per-device channel isolation
+    // --------------------------------------------------------------------
+
+    describe('Feature: solaredge-sunspec-reader, Property 12: Per-device channel isolation', () => {
+        const batteryValueDefs = allBatteryValueDefs;
+
+        it('creates parent folders once and distinct indexed channel objects', async () => {
+            const adapter = new MockAdapter();
+            const manager = new StateManager(adapter);
+
+            await manager.ensureChannel('meter.1');
+            await manager.ensureChannel('meter.2');
+            await manager.ensureChannel('battery.1');
+
+            // Parent folder objects exist once each, as type 'folder'.
+            const meterParent = adapter.objects.get('meter');
+            const batteryParent = adapter.objects.get('battery');
+            expect(meterParent, 'meter parent folder').to.not.equal(undefined);
+            expect(meterParent!.type).to.equal('folder');
+            expect((meterParent!.common as ioBroker.ChannelCommon).name).to.equal('Meter');
+            expect(batteryParent, 'battery parent folder').to.not.equal(undefined);
+            expect(batteryParent!.type).to.equal('folder');
+            expect((batteryParent!.common as ioBroker.ChannelCommon).name).to.equal('Battery');
+
+            // Indexed channel objects exist and are of type 'channel'.
+            for (const id of ['meter.1', 'meter.2', 'battery.1']) {
+                const obj = adapter.objects.get(id);
+                expect(obj, `${id} channel`).to.not.equal(undefined);
+                expect(obj!.type).to.equal('channel');
+            }
+            expect((adapter.objects.get('meter.1')!.common as ioBroker.ChannelCommon).name).to.equal('Meter 1');
+            expect((adapter.objects.get('meter.2')!.common as ioBroker.ChannelCommon).name).to.equal('Meter 2');
+            expect((adapter.objects.get('battery.1')!.common as ioBroker.ChannelCommon).name).to.equal('Battery 1');
+
+            // Repeated ensureChannel calls do not recreate any object (createCalls == 1 per id).
+            await manager.ensureChannel('meter.1');
+            await manager.ensureChannel('meter.2');
+            await manager.ensureChannel('battery.1');
+            for (const id of ['meter', 'battery', 'meter.1', 'meter.2', 'battery.1']) {
+                expect(adapter.createCalls.get(id) ?? 0, `${id} createCalls`).to.equal(1);
+            }
+        });
+
+        it('writes the same def name under different device slots to distinct, non-colliding ids', async () => {
+            const adapter = new MockAdapter();
+            const manager = new StateManager(adapter);
+
+            const meterDef = meterValueDefs[0];
+            await manager.writeValue('meter.1', meterDef, 10);
+            await manager.writeValue('meter.2', meterDef, 20);
+
+            const id1 = `meter.1.${meterDef.name}`;
+            const id2 = `meter.2.${meterDef.name}`;
+            expect(id1).to.not.equal(id2);
+            expect(adapter.writesFor(id1).length).to.equal(1);
+            expect(adapter.writesFor(id2).length).to.equal(1);
+            expect(adapter.writesFor(id1)[0].val).to.equal(10);
+            expect(adapter.writesFor(id2)[0].val).to.equal(20);
+
+            // A battery def lands under battery.<n>.<name>, distinct from meter ids.
+            const batteryDef = batteryValueDefs[0];
+            await manager.writeValue('battery.1', batteryDef, 30);
+            const batId = `battery.1.${batteryDef.name}`;
+            expect(batId).to.not.equal(id1);
+            expect(batId).to.not.equal(id2);
+            expect(adapter.writesFor(batId).length).to.equal(1);
+        });
+
+        it('writeValue over battery value defs writes exactly one ack=true state at battery.1.<name>', async () => {
+            const defArb = fc.constantFrom(...batteryValueDefs);
+            const valueArb = fc.double({ noNaN: true });
+
+            await fc.assert(
+                fc.asyncProperty(defArb, valueArb, async (def, value) => {
+                    const adapter = new MockAdapter();
+                    const manager: IStateManager = new StateManager(adapter);
+                    const id = `battery.1.${def.name}`;
+
+                    await manager.writeValue('battery.1', def, value);
+
+                    const writes = adapter.writesFor(id);
+                    expect(writes.length).to.equal(1);
+                    expect(writes[0].val).to.equal(value);
+                    expect(writes[0].ack).to.equal(true);
+
+                    // No writes leaked to any other id.
+                    expect(adapter.writes.length).to.equal(1);
+                }),
+                { numRuns: 100 },
+            );
         });
     });
 });

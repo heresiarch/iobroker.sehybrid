@@ -22,7 +22,14 @@ import { I18n, type AdminConnection, type IobTheme } from '@iobroker/adapter-rea
 // rather than duplicate them. src-admin/tsconfig.json + Vite resolve the TS sources
 // directly (Vite transpiles them on the fly), so no build step is needed for them.
 import { validateConfig } from '../../../src/lib/config-validation';
-import { getRegisterAddress, getInverterValueDefs, getMeterValueDefs } from '../../../src/lib/sunspec-map';
+import {
+    getRegisterAddress,
+    getInverterValueDefs,
+    getMeterValueDefs,
+    getBatteryValueDefs,
+    getBatteryBase,
+    getDeviceRegisterAddress,
+} from '../../../src/lib/sunspec-map';
 import type { SunSpecRegisterDef } from '../../../src/lib/sunspec-map';
 
 const styles: Record<string, React.CSSProperties> = {
@@ -246,9 +253,16 @@ class Settings extends React.Component<SettingsProps, SettingsState> {
     /**
      * Render the 5-column read-only value table for a single group of defs.
      *
-     * @param defs SunSpec register definitions for this group (inverter or meter).
+     * @param defs SunSpec register definitions for this group (inverter, meter or battery).
+     * @param addressOf Maps a def to the Register-column absolute address. Defaults to
+     *   `getRegisterAddress` (inverter/meter). Battery rows pass a device-specific mapper
+     *   so the column shows the real battery register address instead of falling through
+     *   to INVERTER_BASE.
      */
-    private renderTableFor(defs: SunSpecRegisterDef[]): React.JSX.Element {
+    private renderTableFor(
+        defs: SunSpecRegisterDef[],
+        addressOf: (def: SunSpecRegisterDef) => number = getRegisterAddress,
+    ): React.JSX.Element {
         return (
             <div style={styles.scrollBox}>
                 <Table size="small">
@@ -270,7 +284,7 @@ class Settings extends React.Component<SettingsProps, SettingsState> {
                             defs.map(def => (
                                 <TableRow key={def.name}>
                                     <TableCell>{def.name}</TableCell>
-                                    <TableCell>{getRegisterAddress(def)}</TableCell>
+                                    <TableCell>{addressOf(def)}</TableCell>
                                     <TableCell>{def.datatype}</TableCell>
                                     <TableCell>{String(def.model)}</TableCell>
                                     <TableCell>{def.description ?? ''}</TableCell>
@@ -286,6 +300,7 @@ class Settings extends React.Component<SettingsProps, SettingsState> {
     private renderValueTable(): React.JSX.Element {
         const inverterDefs = getInverterValueDefs();
         const meterDefs = getMeterValueDefs();
+        const batteryDefs = getBatteryValueDefs();
 
         return (
             <Paper style={styles.tableWrapper}>
@@ -311,6 +326,19 @@ class Settings extends React.Component<SettingsProps, SettingsState> {
                     </AccordionSummary>
                     <AccordionDetails style={styles.accordionDetails}>
                         {this.renderTableFor(meterDefs)}
+                    </AccordionDetails>
+                </Accordion>
+
+                <Accordion>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Typography>{`${I18n.t('Battery values')} (${batteryDefs.length})`}</Typography>
+                    </AccordionSummary>
+                    <AccordionDetails style={styles.accordionDetails}>
+                        {/* Battery rows show the battery.1 absolute register address
+                            (getBatteryBase(1) === 0xE100), representative of the per-device
+                            battery.<n> channels, since getRegisterAddress does not handle
+                            model 'battery'. */}
+                        {this.renderTableFor(batteryDefs, def => getDeviceRegisterAddress(getBatteryBase(1), def))}
                     </AccordionDetails>
                 </Accordion>
             </Paper>

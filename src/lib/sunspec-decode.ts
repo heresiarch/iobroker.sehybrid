@@ -12,6 +12,10 @@ export type SunSpecDatatype =
     | 'uint32'
     | 'acc32'
     | 'float32'
+    | 'float32le' // IEEE-754 float32 with little-endian WORD order (two 16-bit words swapped)
+    | 'uint32le' // unsigned 32-bit with little-endian WORD order (words[0] = low word)
+    | 'uint64' // four words hi..lo, big-endian word order, returned as JS number (exact to 2^53)
+    | 'uint64le' // four words with little-endian WORD order (words[0] = lowest word)
     | 'sunssf' // scale factor, stored as int16
     | 'string';
 
@@ -75,7 +79,21 @@ export function isNotImplemented(words: readonly number[], datatype: SunSpecData
         case 'uint32':
         case 'acc32':
             return toUint32(words[0], words[1]) === SENTINEL_UINT32;
+        case 'uint32le':
+            // Same all-ones sentinel; word order does not affect the check.
+            return toUint32(words[0], words[1]) === SENTINEL_UINT32;
+        case 'uint64':
+        case 'uint64le':
+            // All-ones sentinel 0xFFFFFFFFFFFFFFFF: every one of the four words is 0xFFFF.
+            // Word order does not affect this check.
+            return (
+                (words[0] & 0xffff) === 0xffff &&
+                (words[1] & 0xffff) === 0xffff &&
+                (words[2] & 0xffff) === 0xffff &&
+                (words[3] & 0xffff) === 0xffff
+            );
         case 'float32':
+        case 'float32le':
         case 'string':
             return false;
         default:
@@ -109,11 +127,37 @@ export function decodeRegisters(words: readonly number[], datatype: SunSpecDatat
         case 'uint32':
         case 'acc32':
             return toUint32(words[0], words[1]);
+        case 'uint32le':
+            // Little-endian WORD order: words[0] is the low word, words[1] the high word.
+            return toUint32(words[1], words[0]);
         case 'float32': {
             const buf = Buffer.allocUnsafe(4);
             buf.writeUInt16BE(words[0] & 0xffff, 0);
             buf.writeUInt16BE(words[1] & 0xffff, 2);
             return buf.readFloatBE(0);
+        }
+        case 'float32le': {
+            // Little-endian WORD order: bytes within each 16-bit word stay big-endian,
+            // but the two words are swapped (words[0] is the low word). Equivalent to
+            // pymodbus wordorder=LITTLE, byteorder=BIG.
+            const buf = Buffer.allocUnsafe(4);
+            buf.writeUInt16BE(words[1] & 0xffff, 0);
+            buf.writeUInt16BE(words[0] & 0xffff, 2);
+            return buf.readFloatBE(0);
+        }
+        case 'uint64': {
+            // Four big-endian words (hi..lo) combined as a JS number. Exact up to 2^53.
+            const hi = toUint32(words[0], words[1]);
+            const lo = toUint32(words[2], words[3]);
+            return hi * 4294967296 + lo;
+        }
+        case 'uint64le': {
+            // Little-endian WORD order: words[0] is the lowest 16-bit word, words[3] the
+            // highest. Bytes within each word stay big-endian (pymodbus wordorder=LITTLE,
+            // byteorder=BIG). Combined as a JS number, exact up to 2^53.
+            const hi = toUint32(words[3], words[2]);
+            const lo = toUint32(words[1], words[0]);
+            return hi * 4294967296 + lo;
         }
         case 'string':
             return decodeString(words);

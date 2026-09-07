@@ -16,6 +16,11 @@ agent as part of core delivery.
 
 Implementation language: **TypeScript** (per the design; sources under `src/` and `admin/src`).
 
+The plan was later expanded (tasks 15–21) to cover multiple meters (Requirement 9), battery
+device blocks (Requirement 10), and the additional `float32le`/`uint64` datatypes (Requirement 11),
+building on the device-block/template concept in the updated design. All new work remains
+strictly read-only.
+
 ## Tasks
 
 - [x] 1. Project dependencies, config type, and adapter defaults
@@ -203,12 +208,83 @@ Implementation language: **TypeScript** (per the design; sources under `src/` an
     - Confirm detected model, spot-check scaled values against the SolarEdge portal, and confirm no writes occur; manual, not automated
     - _Requirements: 3.1_
 
+- [ ] 15. Extend decoder for battery datatypes (float32le, uint64)
+  - [ ] 15.1 Add 'float32le' and 'uint64' to SunSpecDatatype and decode them
+    - Extend `src/lib/sunspec-decode.ts`: add `'float32le'` (IEEE-754 float32, little-endian WORD order) and `'uint64'` (four words hi..lo -> hi*2^32+lo as JS number, exact to 2^53) to the `SunSpecDatatype` union and `decodeRegisters`
+    - Extend `isNotImplemented` with the uint64 sentinel `0xFFFFFFFFFFFFFFFF`; float32le has no numeric sentinel
+    - Keep existing `float32` big-endian behavior unchanged
+    - _Requirements: 10.3, 10.4, 11.1, 11.2, 11.3, 11.4_
+
+  - [ ]* 15.2 Property test: float32le and uint64 decode round-trip + uint64 sentinel
+    - Extend Property 1 (round-trip) to cover float32le and uint64; extend Property 3 to cover the uint64 sentinel
+    - **Validates: Requirements 10.3, 10.4, 11.2, 11.3**
+
+- [ ] 16. Generalize register map into device templates + per-device offsets
+  - [ ] 16.1 Add meter template offsets and battery template/map
+    - In `src/lib/sunspec-map.ts`: add `METER_DID_BASE` (40188), `METER_REGISTER_OFFSETS = [0,174,348]`, `BATTERY_TEMPLATE_BASE` (0xE100), `BATTERY_DID_BASE` (0xE140), `BATTERY_REGISTER_OFFSETS = [0,256]`; add `model: 'battery'` to the def model union; add `BATTERY_MAP` with the battery register template (identity strings, rated/charge/discharge powers, temps, instantaneous V/I/P as float32le, lifetime import/export as uint64, max/available energy, soh, soe, status/status_internal uint32, event logs) with roles/units per design (Req 10.6/10.7)
+    - Keep the existing meter rows as the meter template (meter.1 at offset 0)
+    - _Requirements: 9.1, 9.2, 10.1, 10.2, 10.6, 10.7, 11_
+
+  - [ ] 16.2 Add per-device address + presence helpers
+    - Add `getDeviceRegisterAddress(baseAddress, def)` and helpers to compute each meter/battery slot's base + DID address from the offsets; add battery value-def selector (exclude identity/info rows analogous to getValueDefs)
+    - _Requirements: 9.2, 10.2_
+
+  - [ ]* 16.3 Property test: per-device addressing == base + offset (+ field offset)
+    - **Property 10: Per-device addressing is base + offset**
+    - **Validates: Requirements 9.1, 9.2, 10.1, 10.2**
+
+- [ ] 17. Extend reader for multiple meters and batteries
+  - [ ] 17.1 Implement detectMeters and detectBatteries
+    - In `src/lib/sunspec-reader.ts`: `detectMeters(client)` probes DID at 40188/40362/40536, returns present slots whose DID ∈ {201..204}; `detectBatteries(client)` probes DID at 0xE140/0xE240, returns present slots (DID != sentinel and != 255)
+    - _Requirements: 9.1, 9.2, 10.1_
+
+  - [ ] 17.2 Implement readMeter(slot) and readBattery(slot)
+    - Read+decode a present meter slot using its per-meter offset (reuse the meter template + scale resolution); read+decode a present battery slot using the battery template with float32le/uint64 (no scale factors), chunking ≤125 registers
+    - _Requirements: 3.2, 9.2, 9.3, 10.2, 10.3, 10.4, 10.5, 10.8_
+
+  - [ ]* 17.3 Unit tests: meter/battery slot detection and per-slot decode; absent slots skipped with warning
+    - **Property 11 (presence gates exposure) coverage + detection unit tests**
+    - **Validates: Requirements 9.2, 9.4, 10.1, 10.9**
+
+- [ ] 18. Generalize StateManager channels for per-device paths
+  - [ ] 18.1 Support channel paths meter.<n> and battery.<n>
+    - Update `src/lib/state-manager.ts` so `ensureChannel`/`ensureState`/`writeValue` accept a channel path (`inverter`, `meter.1|2|3`, `battery.1|2`); create parent folder objects as needed; battery status stored as numeric indicator
+    - _Requirements: 6.9, 9.3, 10.5, 10.6, 10.7_
+
+  - [ ]* 18.2 Unit/property tests: per-device channel isolation
+    - **Property 12: Per-device channel isolation**
+    - **Validates: Requirements 9.3, 10.5**
+
+- [ ] 19. Wire meters+batteries into the polling cycle (main.ts)
+  - [ ] 19.1 Poll all present meters and batteries each cycle
+    - In `src/main.ts` pollOnce: after inverter, call detectMeters -> readMeter per slot -> write under meter.<n>; detectBatteries -> readBattery per slot -> write under battery.<n>; absent slots warn+skip; info.connection tied to inverter read success only (meter/battery absence is not a failure)
+    - Ensure channels for present devices; keep read-only
+    - _Requirements: 9.3, 9.4, 10.5, 10.9, 7.2, 7.3_
+
+  - [ ]* 19.2 Integration tests: multiple meters + battery present, absent slots skipped, battery decode end-to-end
+    - Extend the mock Modbus server to serve meter offsets and battery blocks (little-endian float32, uint64); assert meter.1/meter.2 + battery.1 states, no meter.3/battery.2, info.connection true
+    - _Requirements: 9.2, 9.3, 9.4, 10.2, 10.5, 10.9, 10.3, 10.4_
+
+- [ ] 20. Update admin value table for meters and batteries
+  - [ ] 20.1 Show battery template values and note per-device channels
+    - Update the admin value table to also list battery template values (from BATTERY_MAP) with register/description columns; clarify meter/battery rows represent per-device channels
+    - _Requirements: 4.1, 4.2, 4.3_
+
+  - [ ]* 20.2 Component-logic test for battery rows in the table
+    - _Requirements: 4.1, 4.2, 4.3_
+
+- [ ] 21. Final verification (expanded scope)
+  - [ ] 21.1 Run check, scoped lint, and tests
+    - Run `npm run check`, `npm run lint:src`, `npm run test:ts` (quoted glob), and `npm run build`; fix any failures
+    - _Requirements: 8.3_
+
 ## Notes
 
 - Tasks marked with `*` are optional; they cover automated tests (skippable for a faster MVP) and the manual live-inverter check (task 14.2 requires physical hardware and is not run by the coding agent).
 - Each task references specific requirements for traceability, and property-test tasks reference their design property number.
 - Checkpoints ensure incremental validation between module groups.
-- Property tests validate universal correctness properties (P1–P9); unit and integration tests validate examples, edge cases, lifecycle, and connectivity.
+- Property tests validate universal correctness properties (P1–P12); unit and integration tests validate examples, edge cases, lifecycle, and connectivity.
+- Tasks 15–21 cover the expanded scope: multiple meters (Req 9), battery device blocks (Req 10), and the `float32le`/`uint64` datatypes (Req 11). New property tests P10 (per-device addressing), P11 (presence gates exposure), and P12 (per-device channel isolation) accompany that work. All expanded-scope work is strictly read-only.
 
 ## Task Dependency Graph
 
@@ -224,7 +300,15 @@ Implementation language: **TypeScript** (per the design; sources under `src/` an
     { "id": 6, "tasks": ["10.2", "10.3", "10.4"] },
     { "id": 7, "tasks": ["10.5", "11.1", "11.2", "11.3"] },
     { "id": 8, "tasks": ["11.4", "13.1", "13.2", "13.3"] },
-    { "id": 9, "tasks": ["14.1", "14.2"] }
+    { "id": 9, "tasks": ["14.1", "14.2"] },
+    { "id": 10, "tasks": ["15.1"] },
+    { "id": 11, "tasks": ["15.2", "16.1"] },
+    { "id": 12, "tasks": ["16.2", "16.3"] },
+    { "id": 13, "tasks": ["17.1", "18.1"] },
+    { "id": 14, "tasks": ["17.2", "18.2"] },
+    { "id": 15, "tasks": ["17.3", "19.1"] },
+    { "id": 16, "tasks": ["19.2", "20.1"] },
+    { "id": 17, "tasks": ["20.2", "21.1"] }
   ]
 }
 ```

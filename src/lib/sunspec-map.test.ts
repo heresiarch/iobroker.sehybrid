@@ -9,10 +9,40 @@ import { expect } from 'chai';
 import fc from 'fast-check';
 
 import type { SunSpecRegisterDef, SunSpecRole } from './sunspec-map';
-import { SUNSPEC_MAP, getInverterValueDefs, getMeterValueDefs, getValueDefs } from './sunspec-map';
+import {
+    BATTERY_DID_BASE,
+    BATTERY_MAP,
+    BATTERY_REGISTER_OFFSETS,
+    BATTERY_TEMPLATE_BASE,
+    METER_BASE,
+    METER_DID_BASE,
+    METER_REGISTER_OFFSETS,
+    SUNSPEC_MAP,
+    getBatteryBase,
+    getBatteryDidAddress,
+    getBatteryValueDefs,
+    getDeviceRegisterAddress,
+    getInverterValueDefs,
+    getMeterBase,
+    getMeterDidAddress,
+    getMeterValueDefs,
+    getValueDefs,
+} from './sunspec-map';
 
 /** All datatypes that resolve to an ioBroker `number` state. */
-const NUMERIC_DATATYPES = new Set(['int16', 'uint16', 'int32', 'uint32', 'acc32', 'float32', 'sunssf']);
+const NUMERIC_DATATYPES = new Set([
+    'int16',
+    'uint16',
+    'int32',
+    'uint32',
+    'acc32',
+    'float32',
+    'float32le',
+    'uint32le',
+    'uint64',
+    'uint64le',
+    'sunssf',
+]);
 
 /** The complete `SunSpecDatatype` set (mirrors `sunspec-decode.ts`). */
 const DATATYPES = new Set([...NUMERIC_DATATYPES, 'string']);
@@ -28,6 +58,7 @@ const ALL_ROLES: SunSpecRole[] = [
     'frequency',
     'energy',
     'temperature',
+    'percent',
     'status',
     'info',
 ];
@@ -164,6 +195,77 @@ describe('sunspec-map', () => {
 
         it('getValueDefs([]) returns an empty array (empty-map indication)', () => {
             expect(getValueDefs([])).to.deep.equal([]);
+        });
+    });
+
+    describe('Feature: solaredge-sunspec-reader, Property 10: Per-device addressing is base + offset', () => {
+        const METER_SLOTS = [1, 2, 3] as const;
+        const BATTERY_SLOTS = [1, 2] as const;
+
+        it('meter slot base/DID == template base + slot offset', () => {
+            for (const slot of METER_SLOTS) {
+                const off = METER_REGISTER_OFFSETS[slot - 1];
+                expect(getMeterBase(slot), `meter base slot ${slot}`).to.equal(METER_BASE + off);
+                expect(getMeterDidAddress(slot), `meter DID slot ${slot}`).to.equal(METER_DID_BASE + off);
+            }
+        });
+
+        it('battery slot base/DID == template base + slot offset', () => {
+            for (const slot of BATTERY_SLOTS) {
+                const off = BATTERY_REGISTER_OFFSETS[slot - 1];
+                expect(getBatteryBase(slot), `battery base slot ${slot}`).to.equal(BATTERY_TEMPLATE_BASE + off);
+                expect(getBatteryDidAddress(slot), `battery DID slot ${slot}`).to.equal(BATTERY_DID_BASE + off);
+            }
+        });
+
+        it('getDeviceRegisterAddress(base, def) == base + def.offset for every meter def and slot (property)', () => {
+            const meterDefs = getMeterValueDefs(SUNSPEC_MAP);
+            expect(meterDefs.length).to.be.greaterThan(0);
+            fc.assert(
+                fc.property(fc.constantFrom(...meterDefs), fc.constantFrom(...METER_SLOTS), (def, slot) => {
+                    const base = getMeterBase(slot);
+                    const addr = getDeviceRegisterAddress(base, def);
+                    // Address is base + offset, i.e. the absolute address for this slot.
+                    expect(addr).to.equal(base + def.offset);
+                    expect(addr).to.equal(METER_BASE + METER_REGISTER_OFFSETS[slot - 1] + def.offset);
+                }),
+                { numRuns: 100 },
+            );
+        });
+
+        it('getDeviceRegisterAddress(base, def) == base + def.offset for every battery def and slot (property)', () => {
+            expect(BATTERY_MAP.length).to.be.greaterThan(0);
+            fc.assert(
+                fc.property(fc.constantFrom(...BATTERY_MAP), fc.constantFrom(...BATTERY_SLOTS), (def, slot) => {
+                    const base = getBatteryBase(slot);
+                    const addr = getDeviceRegisterAddress(base, def);
+                    expect(addr).to.equal(base + def.offset);
+                    // For slot 1, address equals the absolute base-0 register address.
+                    if (slot === 1) {
+                        expect(addr).to.equal(BATTERY_TEMPLATE_BASE + def.offset);
+                    }
+                    expect(addr).to.equal(BATTERY_TEMPLATE_BASE + BATTERY_REGISTER_OFFSETS[slot - 1] + def.offset);
+                }),
+                { numRuns: 100 },
+            );
+        });
+
+        it('getBatteryValueDefs excludes role "info" rows and includes soh/soe/status', () => {
+            const values = getBatteryValueDefs();
+            const names = new Set(values.map(d => d.name));
+
+            // No info rows (identity strings, event logs).
+            for (const def of values) {
+                expect(def.role, `role for ${def.name}`).to.not.equal('info');
+            }
+            // Identity strings and event logs are excluded.
+            for (const excluded of ['c_manufacturer', 'c_model', 'c_serialnumber', 'eventLog', 'eventLogInternal']) {
+                expect(names.has(excluded), `excluded ${excluded}`).to.equal(false);
+            }
+            // Measurement values are included.
+            for (const included of ['soh', 'soe', 'status', 'statusInternal', 'instantaneousPower']) {
+                expect(names.has(included), `included ${included}`).to.equal(true);
+            }
         });
     });
 });

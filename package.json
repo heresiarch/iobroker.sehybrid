@@ -75,6 +75,7 @@
     "translate": "translate-adapter",
     "release": "release-script",
     "dev-server": "dev-server run --noBrowserSync",
+    "dev-server:kill": "bash scripts/kill-dev-server.sh",
     "dev-server:sync": "dev-server run",
     "dev-server:watch": "dev-server watch --noBrowserSync",
     "dev-server:setup": "dev-server setup",

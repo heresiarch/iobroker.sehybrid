@@ -32,6 +32,33 @@ function encFloat32(v: number): number[] {
     return [buf.readUInt16BE(0), buf.readUInt16BE(2)];
 }
 
+function encFloat32LE(v: number): number[] {
+    // Little-endian WORD order: encode as big-endian float32, then swap the two words
+    // so decodeRegisters(..., 'float32le') round-trips.
+    const buf = Buffer.allocUnsafe(4);
+    buf.writeFloatBE(v, 0);
+    return [buf.readUInt16BE(2), buf.readUInt16BE(0)];
+}
+
+function encUint32LE(v: number): number[] {
+    // Little-endian WORD order: low word first, high word second (inverse of encUint32).
+    const u = v >>> 0;
+    return [u & 0xffff, (u >>> 16) & 0xffff];
+}
+
+function encUint64(v: number): number[] {
+    // Split a non-negative JS integer (<= Number.MAX_SAFE_INTEGER) into four
+    // big-endian 16-bit words (hi..lo).
+    const hi = Math.floor(v / 4294967296);
+    const lo = v % 4294967296;
+    return [(hi >>> 16) & 0xffff, hi & 0xffff, (lo >>> 16) & 0xffff, lo & 0xffff];
+}
+
+function encUint64LE(v: number): number[] {
+    // Little-endian WORD order: reverse of encUint64 (words[0] = lowest word).
+    return encUint64(v).reverse();
+}
+
 function encString(s: string, wordLen: number): number[] {
     const bytes = Buffer.alloc(wordLen * 2, 0);
     for (let i = 0; i < s.length && i < wordLen * 2; i++) {
@@ -106,6 +133,57 @@ describe('sunspec-decode', () => {
                 }),
                 RUNS,
             );
+
+            // float32le: little-endian word order; fc.float is exact after float32 round-trip.
+            fc.assert(
+                fc.property(fc.float(), v => {
+                    const decoded = decodeRegisters(encFloat32LE(v), 'float32le');
+                    if (Number.isNaN(v)) {
+                        expect(Number.isNaN(decoded)).to.equal(true);
+                    } else {
+                        expect(decoded).to.equal(v);
+                    }
+                }),
+                RUNS,
+            );
+
+            // uint32le: little-endian word order (words[0] = low word); exclude sentinel.
+            fc.assert(
+                fc.property(fc.integer({ min: 0, max: 0xfffffffe }), v => {
+                    expect(decodeRegisters(encUint32LE(v), 'uint32le')).to.equal(v);
+                }),
+                RUNS,
+            );
+
+            // uint32le: concrete real-device battery status words 0x0003 0x0000 => 3 (Charge).
+            expect(decodeRegisters([0x0003, 0x0000], 'uint32le')).to.equal(3);
+
+            // uint64: four big-endian words -> JS number, exact up to 2^53.
+            fc.assert(
+                fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), v => {
+                    expect(decodeRegisters(encUint64(v), 'uint64')).to.equal(v);
+                }),
+                RUNS,
+            );
+
+            // uint64: explicit large constants beyond fast-check's default integer range.
+            for (const v of [3466757, 2 ** 40, 2 ** 52, Number.MAX_SAFE_INTEGER]) {
+                expect(decodeRegisters(encUint64(v), 'uint64'), `uint64 ${v}`).to.equal(v);
+            }
+
+            // uint64le: little-endian word order (words[0] = lowest word); exclude sentinel.
+            fc.assert(
+                fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), v => {
+                    expect(decodeRegisters(encUint64LE(v), 'uint64le')).to.equal(v);
+                }),
+                RUNS,
+            );
+
+            // uint64le: concrete real-device battery lifetime-energy words 0x0F97 0 0 0 => 3991 Wh.
+            expect(decodeRegisters([0x0f97, 0x0000, 0x0000, 0x0000], 'uint64le')).to.equal(3991);
+            for (const v of [3466757, 2 ** 40, 2 ** 52, Number.MAX_SAFE_INTEGER]) {
+                expect(decodeRegisters(encUint64LE(v), 'uint64le'), `uint64le ${v}`).to.equal(v);
+            }
 
             // string: ASCII without trailing NUL/space (decoder trims those).
             fc.assert(
@@ -186,6 +264,9 @@ describe('sunspec-decode', () => {
                 { words: [0x8000, 0x0000], datatype: 'int32' },
                 { words: [0xffff, 0xffff], datatype: 'uint32' },
                 { words: [0xffff, 0xffff], datatype: 'acc32' },
+                { words: [0xffff, 0xffff], datatype: 'uint32le' },
+                { words: [0xffff, 0xffff, 0xffff, 0xffff], datatype: 'uint64' },
+                { words: [0xffff, 0xffff, 0xffff, 0xffff], datatype: 'uint64le' },
             ];
 
             for (const { words, datatype } of sentinels) {
@@ -227,6 +308,17 @@ describe('sunspec-decode', () => {
                     expect(decodeRegisters(encUint32(v), 'uint32')).to.not.equal(null);
                     expect(isNotImplemented(encUint32(v), 'acc32')).to.equal(false);
                     expect(decodeRegisters(encUint32(v), 'acc32')).to.not.equal(null);
+                }),
+                RUNS,
+            );
+
+            // Non-sentinel uint64 values decode to a non-null number.
+            fc.assert(
+                fc.property(fc.integer({ min: 0, max: 2 ** 31 - 1 }), v => {
+                    expect(isNotImplemented(encUint64(v), 'uint64')).to.equal(false);
+                    const decoded = decodeRegisters(encUint64(v), 'uint64');
+                    expect(decoded).to.not.equal(null);
+                    expect(typeof decoded).to.equal('number');
                 }),
                 RUNS,
             );

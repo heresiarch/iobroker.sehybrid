@@ -22,9 +22,21 @@
 
 import type { IModbusClient } from './modbus-client';
 import { MAX_REGISTERS_PER_READ } from './modbus-client';
-import { decodeRegisters, applyScaleFactor } from './sunspec-decode';
-import type { SunSpecRegisterDef } from './sunspec-map';
-import { SUNSPEC_MAP, INVERTER_BASE, METER_BASE, getInverterValueDefs, getMeterValueDefs } from './sunspec-map';
+import { applyScaleFactor, decodeRegisters } from './sunspec-decode';
+import type { BatterySegment, SunSpecRegisterDef } from './sunspec-map';
+import {
+    BATTERY_READ_SEGMENTS,
+    getBatteryBase,
+    getBatteryPresenceAddress,
+    getBatteryValueDefs,
+    getInverterValueDefs,
+    getMeterBase,
+    getMeterDidAddress,
+    getMeterValueDefs,
+    INVERTER_BASE,
+    METER_BASE,
+    SUNSPEC_MAP,
+} from './sunspec-map';
 
 /** SunSpec inverter model identifiers: 101 single / 102 split / 103 three phase. */
 export type InverterModelId = 101 | 102 | 103;
@@ -36,6 +48,18 @@ export interface DecodedValue {
     def: SunSpecRegisterDef;
     /** Engineering value, or `null` when unavailable (NOT_IMPLEMENTED / skipped). */
     value: number | string | null;
+}
+
+/** A meter slot detected as present, with its 1-based slot index and model id (Req 9.1, 9.2). */
+export interface DetectedMeter {
+    index: 1 | 2 | 3;
+    model: MeterModelId;
+}
+
+/** A battery slot detected as present, with its 1-based slot index and raw DID (Req 10.1). */
+export interface DetectedBattery {
+    index: 1 | 2;
+    did: number;
 }
 
 /**
@@ -81,12 +105,27 @@ export interface ISunSpecReader {
     readInverter(client: IModbusClient, model: InverterModelId): Promise<DecodedValue[]>;
     /** Read + decode the detected meter block (Req 3.2, 3.6, 3.7, 3.8). */
     readMeter(client: IModbusClient, model: MeterModelId): Promise<DecodedValue[]>;
+    /** Probe meter slots 1..3 and return only the present ones (Req 9.1, 9.2). */
+    detectMeters(client: IModbusClient): Promise<DetectedMeter[]>;
+    /** Probe battery slots 1..2 and return only the present ones (Req 10.1). */
+    detectBatteries(client: IModbusClient): Promise<DetectedBattery[]>;
+    /** Read + decode a present meter slot at its per-slot base (Req 9.2, 9.3). */
+    readMeterSlot(client: IModbusClient, meter: DetectedMeter): Promise<DecodedValue[]>;
+    /** Read + decode a present battery slot at its per-slot base (Req 10.2-10.4, 10.8). */
+    readBatterySlot(client: IModbusClient, battery: DetectedBattery): Promise<DecodedValue[]>;
 }
 
 /** Set of valid inverter model ids for detection. */
 const INVERTER_MODEL_IDS: ReadonlySet<number> = new Set<number>([101, 102, 103]);
 /** Set of valid meter model ids for detection. */
 const METER_MODEL_IDS: ReadonlySet<number> = new Set<number>([201, 202, 203, 204]);
+
+/** The meter slots probed for presence (Req 9.1). */
+const METER_SLOTS: ReadonlyArray<1 | 2 | 3> = [1, 2, 3];
+/** The battery slots probed for presence (Req 10.1). */
+const BATTERY_SLOTS: ReadonlyArray<1 | 2> = [1, 2];
+/** uint16 NOT_IMPLEMENTED sentinel for the battery DID register (Req 10.1). */
+const UINT16_SENTINEL = 0xffff;
 
 /**
  * Plan a sequence of Modbus read requests that together cover exactly the register
@@ -201,6 +240,183 @@ export class SunSpecReader implements ISunSpecReader {
     }
 
     /**
+     * Probe meter slots 1..3 for presence and return only the present ones.
+     *
+     * For each slot the DID register at {@link getMeterDidAddress} is read; the slot
+     * is present when the DID is one of the documented meter models 201/202/203/204,
+     * in which case `{ index, model }` is included. Any other value (including the
+     * uint16 sentinel or 0 for an unpopulated slot) means the slot is absent: it is
+     * skipped after a debug log (Req 9.1, 9.2).
+     *
+     * @param client connected read-only Modbus client
+     */
+    async detectMeters(client: IModbusClient): Promise<DetectedMeter[]> {
+        const detected: DetectedMeter[] = [];
+        for (const slot of METER_SLOTS) {
+            const addr = getMeterDidAddress(slot);
+            const [raw] = await client.readHoldingRegisters(addr, 1);
+            if (METER_MODEL_IDS.has(raw)) {
+                this.log.debug(`Detected meter.${slot} model ${raw} (DID register ${addr})`);
+                detected.push({ index: slot, model: raw as MeterModelId });
+            } else {
+                this.log.debug(`No meter in slot ${slot}: DID register ${addr} = ${raw} (expected 201..204)`);
+            }
+        }
+        return detected;
+    }
+
+    /**
+     * Probe battery slots 1..2 for presence and return only the present ones.
+     *
+     * Presence is decided by reading `c_deviceaddress` at {@link getBatteryPresenceAddress}
+     * (`0xE140` / `0xE240`): a populated slot reports a real Modbus id (e.g. 112) while an
+     * unpopulated slot reads the NOT_IMPLEMENTED sentinel `255` (0x00FF) or `0xFFFF`. The
+     * block base word (`0xE100`/`0xE200`) is NOT a reliable signal — verified live, an
+     * absent slot 2 still returns a stale identity word at its base (`0x536F`) while every
+     * other register in that slot times out, which would falsely detect the slot. A
+     * single-register read at `0xE140`/`0xE240` is safe for both present and absent slots.
+     * Absent slots are skipped after a debug log (Req 10.1). Verified against a live
+     * SolarEdge Home Battery.
+     *
+     * @param client connected read-only Modbus client
+     */
+    async detectBatteries(client: IModbusClient): Promise<DetectedBattery[]> {
+        const detected: DetectedBattery[] = [];
+        for (const slot of BATTERY_SLOTS) {
+            const addr = getBatteryPresenceAddress(slot);
+            let raw: number;
+            try {
+                [raw] = await client.readHoldingRegisters(addr, 1);
+            } catch (e) {
+                // An unpopulated slot may reject the read outright; treat as absent.
+                this.log.debug(`No battery in slot ${slot}: presence read at ${addr} failed (${describeError(e)})`);
+                continue;
+            }
+            const probe = raw & 0xffff;
+            if (probe !== UINT16_SENTINEL && probe !== 255 && probe !== 0) {
+                this.log.debug(`Detected battery.${slot} (presence register ${addr} = ${probe})`);
+                detected.push({ index: slot, did: probe });
+            } else {
+                this.log.debug(`No battery in slot ${slot}: presence register ${addr} = ${probe} (absent)`);
+            }
+        }
+        return detected;
+    }
+
+    /**
+     * Read and decode a present meter slot at its per-slot base address.
+     *
+     * Reuses the shared meter template (rows tagged canonical model 201) and its
+     * scale-factor resolution; only the block base changes per slot
+     * ({@link getMeterBase}), so meter.2/3 offsets resolve correctly relative to
+     * their region (Req 9.2, 9.3).
+     *
+     * @param client connected read-only Modbus client
+     * @param meter the present meter slot to read (from {@link detectMeters})
+     */
+    async readMeterSlot(client: IModbusClient, meter: DetectedMeter): Promise<DecodedValue[]> {
+        const base = getMeterBase(meter.index);
+        const blockDefs = SUNSPEC_MAP.filter(d => d.model === 201);
+        const valueDefs = getMeterValueDefs();
+        return this.readBlock(client, base, blockDefs, valueDefs, `meter.${meter.index} (model ${meter.model})`);
+    }
+
+    /**
+     * Read and decode a present battery slot at its per-slot base address.
+     *
+     * The SolarEdge battery block is NOT one contiguous readable region: it is split
+     * into two readable segments ({@link BATTERY_READ_SEGMENTS}) separated by an
+     * unmapped gap, and the device rejects (times out) any Modbus read that crosses
+     * the gap or over-reads a segment. So this must NOT use the single min..max span
+     * sweep that {@link readBlock} performs; instead each segment is read as its own
+     * contiguous request and reassembled by offset. Any value def that falls (even
+     * partly) in the gap — i.e. whose words were not read by any segment — is skipped.
+     *
+     * Battery values carry no `sunssf`/`scaleFactorRef`, so no scale resolution is
+     * needed; decoded float32le / uint32le / uint64 values pass through unchanged, and
+     * a NOT_IMPLEMENTED sentinel decodes to `null` (Req 10.2, 10.3, 10.4, 10.8).
+     *
+     * @param client connected read-only Modbus client
+     * @param battery the present battery slot to read (from {@link detectBatteries})
+     */
+    async readBatterySlot(client: IModbusClient, battery: DetectedBattery): Promise<DecodedValue[]> {
+        const base = getBatteryBase(battery.index);
+        return this.readSegmentedBlock(
+            client,
+            base,
+            BATTERY_READ_SEGMENTS,
+            getBatteryValueDefs(),
+            `battery.${battery.index}`,
+        );
+    }
+
+    /**
+     * Read a device block that is split into several contiguous read segments with
+     * unmapped gaps between them, decoding only the value defs whose words are fully
+     * covered by one of the segments.
+     *
+     * Each segment is read as its own Modbus request (chunked to <=125 registers within
+     * the segment) — a read is never issued across a gap. The read words are collected
+     * into a sparse map keyed by word offset (relative to `base`). A value def decodes
+     * only when every word it spans is present in the map; a def landing in a gap is
+     * skipped with a debug log (it produces no state, Req 10.9-style). These blocks
+     * carry no scale factors, so values decode directly.
+     *
+     * @param client   connected read-only Modbus client
+     * @param base     base-0 register address of the block (segment/def offsets are relative to it)
+     * @param segments the readable segments (word offset + length, relative to `base`)
+     * @param valueDefs the measurement value defs to emit as {@link DecodedValue}[]
+     * @param label    human-readable block label for log messages
+     */
+    private async readSegmentedBlock(
+        client: IModbusClient,
+        base: number,
+        segments: readonly BatterySegment[],
+        valueDefs: SunSpecRegisterDef[],
+        label: string,
+    ): Promise<DecodedValue[]> {
+        // Read every segment separately and collect words into a sparse offset->word map.
+        const wordAt = new Map<number, number>();
+        for (const segment of segments) {
+            const startAddr = base + segment.offset;
+            const chunks = planReadChunks(startAddr, segment.length);
+            for (const chunk of chunks) {
+                const data = await client.readHoldingRegisters(chunk.address, chunk.length);
+                const baseOffset = chunk.address - base;
+                for (let i = 0; i < data.length; i++) {
+                    wordAt.set(baseOffset + i, data[i]);
+                }
+            }
+        }
+        this.log.debug(`Read ${label} block: ${segments.length} segment(s), ${wordAt.size} registers`);
+
+        const results: DecodedValue[] = [];
+        for (const def of valueDefs) {
+            // Gather this def's words; skip the value entirely if any word is missing
+            // (it lies in an unmapped gap and was never read).
+            const words: number[] = [];
+            let complete = true;
+            for (let i = 0; i < def.length; i++) {
+                const w = wordAt.get(def.offset + i);
+                if (w === undefined) {
+                    complete = false;
+                    break;
+                }
+                words.push(w);
+            }
+            if (!complete) {
+                this.log.debug(`Skipping ${label} value "${def.name}": not in a readable segment`);
+                continue;
+            }
+
+            // Segmented blocks (battery) have no scale factors; decode directly.
+            const value = decodeRegisters(words, def.datatype);
+            results.push({ def, value });
+        }
+        return results;
+    }
+
+    /**
      * Shared block read/decode pipeline.
      *
      * @param client    connected read-only Modbus client
@@ -305,4 +521,13 @@ export class SunSpecReader implements ISunSpecReader {
 
         return results;
     }
+}
+
+/**
+ * Extract a readable message from an unknown thrown value.
+ *
+ * @param err
+ */
+function describeError(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
 }

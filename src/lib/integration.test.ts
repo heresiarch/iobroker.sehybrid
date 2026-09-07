@@ -32,14 +32,20 @@ import { ModbusClient } from './modbus-client';
 import { StateManager, type StateManagerAdapter } from './state-manager';
 import { decodeRegisters } from './sunspec-decode';
 import {
+    BATTERY_READ_SEGMENTS,
     COMMON_BASE,
+    getBatteryBase,
+    getBatteryPresenceAddress,
+    getBatteryValueDefs,
+    getInverterValueDefs,
+    getMeterBase,
+    getMeterDidAddress,
+    getMeterValueDefs,
     INVERTER_BASE,
     METER_BASE,
-    getInverterValueDefs,
-    getMeterValueDefs,
     type SunSpecRegisterDef,
 } from './sunspec-map';
-import { METER_DID_ADDRESS, SunSpecReader, type Logger } from './sunspec-reader';
+import { SunSpecReader, type Logger } from './sunspec-reader';
 
 // modbus-serial exposes the TCP server as a static property on the default export.
 const ServerTCP = (ModbusRTU as unknown as { ServerTCP: new (vector: unknown, opts: unknown) => MockServer }).ServerTCP;
@@ -77,6 +83,55 @@ class RegisterStore {
     setU32(addr: number, value: number): void {
         this.set(addr, (value >>> 16) & 0xffff);
         this.set(addr + 1, value & 0xffff);
+    }
+
+    /**
+     * Write an IEEE-754 float32 in little-endian WORD order across two words
+     * (matches the `float32le` decoder: words[0] is the LOW word, words[1] the HIGH).
+     *
+     * @param addr
+     * @param value
+     */
+    setFloat32le(addr: number, value: number): void {
+        const buf = Buffer.allocUnsafe(4);
+        buf.writeFloatBE(value, 0);
+        const hiWord = buf.readUInt16BE(0);
+        const loWord = buf.readUInt16BE(2);
+        // Little-endian word order: low word first.
+        this.set(addr, loWord);
+        this.set(addr + 1, hiWord);
+    }
+
+    /**
+     * Write a uint64 across four consecutive words, big-endian word order (hi..lo),
+     * matching the `uint64` decoder. Exact for values up to 2^53.
+     *
+     * @param addr
+     * @param value
+     */
+    setU64(addr: number, value: number): void {
+        const hi = Math.floor(value / 4294967296);
+        const lo = value >>> 0;
+        this.set(addr, (hi >>> 16) & 0xffff);
+        this.set(addr + 1, hi & 0xffff);
+        this.set(addr + 2, (lo >>> 16) & 0xffff);
+        this.set(addr + 3, lo & 0xffff);
+    }
+
+    /**
+     * Write a uint64 across four words in little-endian WORD order (lowest word
+     * first), matching the `uint64le` decoder used by the battery lifetime counters.
+     *
+     * @param addr
+     * @param value
+     */
+    setU64le(addr: number, value: number): void {
+        const hi = Math.floor(value / 4294967296);
+        const lo = value >>> 0;
+        this.set(addr, lo & 0xffff);
+        this.set(addr + 1, (lo >>> 16) & 0xffff);
+        this.set(addr + 2, hi & 0xffff);
+        this.set(addr + 3, (hi >>> 16) & 0xffff);
     }
 
     /**
@@ -120,6 +175,15 @@ interface SeededDevice {
     store: RegisterStore;
     invRaw: Map<string, number>;
     meterRaw: Map<string, number>;
+    /** Raw values seeded into meter slot 2 (keyed by def name). */
+    meter2Raw: Map<string, number>;
+    /** Concrete battery slot-1 values seeded for end-to-end decode assertions. */
+    battery: {
+        instantaneousPower: number;
+        lifetimeExportEnergy: number;
+        lifetimeImportEnergy: number;
+        status: number;
+    };
 }
 
 function seedDevice(): SeededDevice {
@@ -138,12 +202,83 @@ function seedDevice(): SeededDevice {
 
     const invRaw = seedBlock(store, INVERTER_BASE, getInverterValueDefs(), scaleRegistersFor('inverter'));
 
-    // --- Meter block: DID 201 ----------------------------------------------
-    store.set(METER_DID_ADDRESS, 201); // meter model id @ 40188
-
+    // --- Meter slot 1: DID 201 @ 40188 (present) ----------------------------
+    store.set(getMeterDidAddress(1), 201); // == METER_DID_ADDRESS
     const meterRaw = seedBlock(store, METER_BASE, getMeterValueDefs(), scaleRegistersFor('meter'), 2);
 
-    return { store, invRaw, meterRaw };
+    // --- Meter slot 2: DID 201 @ 40362 (present) ----------------------------
+    // Seed the meter.2 region at its per-slot base; reuse the meter template + SF=0.
+    store.set(getMeterDidAddress(2), 201);
+    const meter2Raw = seedBlock(store, getMeterBase(2), getMeterValueDefs(), scaleRegistersFor('meter'), 7);
+
+    // --- Meter slot 3: absent ----------------------------------------------
+    store.set(getMeterDidAddress(3), 0xffff); // sentinel => slot skipped
+
+    // --- Battery slot 1: present -------------------------------------------
+    // Presence is c_deviceaddress at 0xE140: a real Modbus id (112) marks it present.
+    store.setString(getBatteryBase(1), 'SolarEdge', 16); // identity string (block base)
+    store.set(getBatteryPresenceAddress(1), 112); // c_deviceaddress @ 0xE140
+    const battery = {
+        instantaneousPower: -1234.5, // float32le, signed to exercise the sign bit
+        lifetimeExportEnergy: 9_876_543_210, // uint64le above 2^32 to exercise the hi word
+        lifetimeImportEnergy: 4_242_424_242,
+        status: 3, // uint32le words 0x0003 0x0000 => 3 (Charge)
+    };
+    seedBatteryBlock(store, getBatteryBase(1), battery);
+
+    // --- Battery slot 2: absent --------------------------------------------
+    // c_deviceaddress at 0xE240 reads the not-implemented sentinel => slot skipped.
+    store.set(getBatteryPresenceAddress(2), 0xffff);
+
+    return { store, invRaw, meterRaw, meter2Raw, battery };
+}
+
+/**
+ * Seed a battery slot's block at `base`. The battery template carries no scale
+ * factors; float32le / uint32le / uint64le values are written in the exact word
+ * order the decoder expects. Every value def is seeded so all battery.<n>.* states
+ * are exercised, with the spot-checked fields set to the given concrete values.
+ *
+ * @param store    backing store
+ * @param base     absolute base-0 address of the battery block (getBatteryBase(slot))
+ * @param concrete concrete values for the spot-checked fields
+ */
+function seedBatteryBlock(
+    store: RegisterStore,
+    base: number,
+    concrete: {
+        instantaneousPower: number;
+        lifetimeExportEnergy: number;
+        lifetimeImportEnergy: number;
+        status: number;
+    },
+): void {
+    let floatSeed = 1;
+    let u64Seed = 100;
+    for (const def of getBatteryValueDefs()) {
+        const addr = base + def.offset;
+        if (def.name === 'instantaneousPower') {
+            store.setFloat32le(addr, concrete.instantaneousPower);
+        } else if (def.name === 'lifetimeExportEnergy') {
+            store.setU64le(addr, concrete.lifetimeExportEnergy);
+        } else if (def.name === 'lifetimeImportEnergy') {
+            store.setU64le(addr, concrete.lifetimeImportEnergy);
+        } else if (def.name === 'status') {
+            // uint32le: low word first (0x0003), high word second (0x0000).
+            store.set(addr, concrete.status & 0xffff);
+            store.set(addr + 1, (concrete.status >>> 16) & 0xffff);
+        } else if (def.datatype === 'float32le') {
+            store.setFloat32le(addr, floatSeed++ * 1.5);
+        } else if (def.datatype === 'uint64le') {
+            store.setU64le(addr, u64Seed++);
+        } else if (def.datatype === 'uint64') {
+            store.setU64(addr, u64Seed++);
+        } else if (def.length === 2) {
+            store.setU32(addr, u64Seed++);
+        } else {
+            store.set(addr, u64Seed++ & 0xffff);
+        }
+    }
 }
 
 /**
@@ -215,6 +350,38 @@ function seedBlock(
  * @param port
  * @param delayMs
  */
+/**
+ * Absolute [start, end) address windows of the battery read batches for both slots,
+ * derived from BATTERY_READ_SEGMENTS so the mock stays in sync with the map.
+ */
+const BATTERY_BATCH_WINDOWS: Array<{ start: number; end: number }> = [getBatteryBase(1), getBatteryBase(2)].flatMap(
+    base => BATTERY_READ_SEGMENTS.map(s => ({ start: base + s.offset, end: base + s.offset + s.length })),
+);
+
+/**
+ * True when the read window [addr, addr+length) should be REJECTED by the mock as it
+ * would be by the real device. The device serves each battery batch (batch 2 spans the
+ * internal register gap as padding) but times out on an over-wide read that exceeds a
+ * single batch — e.g. the whole 0xE100..0xE193 span. A multi-word read that starts
+ * inside the battery address range but is not contained in one batch window is rejected;
+ * single-word probes and all non-battery reads always succeed.
+ */
+function rejectsBatteryRead(addr: number, length: number): boolean {
+    if (length <= 1) {
+        return false;
+    }
+    const readStart = addr;
+    const readEnd = addr + length; // exclusive
+    // Only police reads that touch the battery address space.
+    const touchesBattery = BATTERY_BATCH_WINDOWS.some(w => readStart < w.end && readEnd > w.start);
+    if (!touchesBattery) {
+        return false;
+    }
+    // Allowed only if fully contained in a single batch window.
+    const contained = BATTERY_BATCH_WINDOWS.some(w => readStart >= w.start && readEnd <= w.end);
+    return !contained;
+}
+
 function startServer(store: RegisterStore, port: number, delayMs = 0): Promise<MockServer> {
     return new Promise((resolve, reject) => {
         const vector = {
@@ -226,6 +393,13 @@ function startServer(store: RegisterStore, port: number, delayMs = 0): Promise<M
                 _unitID: number,
                 cb: (err: Error | null, values: number[]) => void,
             ): void => {
+                // Mirror the real device: it serves each battery batch (batch 2 spans the
+                // internal gap as padding) but times out on an over-wide read that exceeds
+                // a single batch, such as the whole-block span.
+                if (rejectsBatteryRead(addr, length)) {
+                    cb(new Error('Illegal data address (battery read too wide)'), []);
+                    return;
+                }
                 const values = store.slice(addr, length);
                 if (delayMs > 0) {
                     setTimeout(() => cb(null, values), delayMs);
@@ -338,7 +512,7 @@ describe('Feature: solaredge-sunspec-reader, integration: full polling cycle', (
         const adapter = new MockAdapter();
         const sm = new StateManager(adapter);
         await sm.ensureChannel('inverter');
-        await sm.ensureChannel('meter');
+        await sm.ensureChannel('meter.1');
 
         // --- Inverter: detect model 103, read, write states -----------------
         const invModel = await reader.detectInverterModel(client);
@@ -383,18 +557,18 @@ describe('Feature: solaredge-sunspec-reader, integration: full polling cycle', (
         const meterValues = await reader.readMeter(client, meterModel!);
         expect(meterValues.length).to.equal(getMeterValueDefs().length);
         for (const dv of meterValues) {
-            await sm.writeValue('meter', dv.def, dv.value);
+            await sm.writeValue('meter.1', dv.def, dv.value);
         }
 
         // mPower (int16) and mExportedWh (acc32, 2 words) both reference a real sunssf
         // scale factor set to 0, so scaled == raw for each — proving the 16-bit and
         // 32-bit decode paths flow end to end through client->reader->state (Req 3.4, 6.8).
         const mPowerRaw = device.meterRaw.get('mPower')!;
-        expect(adapter.lastVal('meter.mPower')).to.equal(mPowerRaw);
+        expect(adapter.lastVal('meter.1.mPower')).to.equal(mPowerRaw);
         const mExportedRaw = device.meterRaw.get('mExportedWh')!;
-        expect(adapter.lastVal('meter.mExportedWh')).to.equal(mExportedRaw);
+        expect(adapter.lastVal('meter.1.mExportedWh')).to.equal(mExportedRaw);
         const mImportedRaw = device.meterRaw.get('mImportedWh')!;
-        expect(adapter.lastVal('meter.mImportedWh')).to.equal(mImportedRaw);
+        expect(adapter.lastVal('meter.1.mImportedWh')).to.equal(mImportedRaw);
 
         // Model a successful cycle: info.connection would be set true (Req 7.2).
         let connection = false;
@@ -404,6 +578,110 @@ describe('Feature: solaredge-sunspec-reader, integration: full polling cycle', (
         // Channels were created for grouping (Req 6.9 / object tree).
         expect(adapter.objects.has('inverter')).to.equal(true);
         expect(adapter.objects.has('meter')).to.equal(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Task 19.2 — multiple meters + battery
+// ---------------------------------------------------------------------------
+
+describe('Feature: solaredge-sunspec-reader, integration: multiple meters + battery', () => {
+    let server: MockServer | undefined;
+    let client: ModbusClient | undefined;
+    const port = allocPort();
+    let device: SeededDevice;
+
+    before(async function () {
+        this.timeout(15000);
+        device = seedDevice();
+        server = await startServer(device.store, port);
+    });
+
+    after(async function () {
+        this.timeout(15000);
+        await (client ? client.close() : Promise.resolve());
+        await closeServer(server);
+    });
+
+    it('detects + reads all present meters and batteries, skips absent slots, decodes float32le/uint64 (Req 9.2, 9.3, 9.4, 10.2, 10.3, 10.4, 10.5, 10.9)', async function () {
+        this.timeout(15000);
+
+        client = new ModbusClient();
+        await client.connect(HOST, port, 1);
+        expect(client.isConnected()).to.equal(true);
+
+        const reader = new SunSpecReader(SILENT_LOGGER);
+        const adapter = new MockAdapter();
+        const sm = new StateManager(adapter);
+        await sm.ensureChannel('inverter');
+
+        // --- Inverter read still works => connection would be true (Req 7.2) --
+        const invModel = await reader.detectInverterModel(client);
+        expect(invModel).to.equal(103);
+        const invValues = await reader.readInverter(client, invModel!);
+        for (const dv of invValues) {
+            await sm.writeValue('inverter', dv.def, dv.value);
+        }
+        const connection = true; // full inverter read succeeded
+        expect(connection).to.equal(true);
+
+        // --- Meters: slot 1 + slot 2 present, slot 3 absent (Req 9.2, 9.4) ---
+        const meters = await reader.detectMeters(client);
+        expect(meters.map(m => m.index)).to.deep.equal([1, 2]);
+        for (const meter of meters) {
+            const channel = `meter.${meter.index}` as const;
+            await sm.ensureChannel(channel);
+            const values = await reader.readMeterSlot(client, meter);
+            for (const dv of values) {
+                await sm.writeValue(channel, dv.def, dv.value);
+            }
+        }
+
+        // --- Batteries: slot 1 present, slot 2 absent (Req 10.1, 10.9) -------
+        const batteries = await reader.detectBatteries(client);
+        expect(batteries.map(b => b.index)).to.deep.equal([1]);
+        for (const battery of batteries) {
+            const channel = `battery.${battery.index}` as const;
+            await sm.ensureChannel(channel);
+            const values = await reader.readBatterySlot(client, battery);
+            for (const dv of values) {
+                await sm.writeValue(channel, dv.def, dv.value);
+            }
+        }
+
+        // --- Assert per-device channel presence/absence (Req 9.3, 9.4, 10.5) -
+        expect(adapter.objects.has('meter.1'), 'meter.1 channel').to.equal(true);
+        expect(adapter.objects.has('meter.2'), 'meter.2 channel').to.equal(true);
+        expect(adapter.objects.has('meter.3'), 'meter.3 must be absent').to.equal(false);
+        expect(adapter.objects.has('battery.1'), 'battery.1 channel').to.equal(true);
+        expect(adapter.objects.has('battery.2'), 'battery.2 must be absent').to.equal(false);
+
+        // States exist under meter.1.* and meter.2.* but not meter.3.*.
+        const hasStatePrefix = (prefix: string): boolean =>
+            [...adapter.states.keys()].some(id => id.startsWith(prefix));
+        expect(hasStatePrefix('meter.1.'), 'meter.1 states').to.equal(true);
+        expect(hasStatePrefix('meter.2.'), 'meter.2 states').to.equal(true);
+        expect(hasStatePrefix('meter.3.'), 'no meter.3 states').to.equal(false);
+        expect(hasStatePrefix('battery.1.'), 'battery.1 states').to.equal(true);
+        expect(hasStatePrefix('battery.2.'), 'no battery.2 states').to.equal(false);
+
+        // --- Spot-check a scaled meter value on each slot (SF=0 => scaled==raw)
+        expect(adapter.lastVal('meter.1.mPower')).to.equal(device.meterRaw.get('mPower'));
+        expect(adapter.lastVal('meter.2.mPower')).to.equal(device.meter2Raw.get('mPower'));
+
+        // --- Spot-check battery float32le + uint64 decode end to end ---------
+        const powerVal = adapter.lastVal('battery.1.instantaneousPower') as number;
+        // float32 is not exact; assert within a tiny tolerance.
+        expect(Math.abs(powerVal - device.battery.instantaneousPower)).to.be.lessThan(0.01);
+        expect(adapter.lastVal('battery.1.lifetimeExportEnergy')).to.equal(device.battery.lifetimeExportEnergy);
+        expect(adapter.lastVal('battery.1.lifetimeImportEnergy')).to.equal(device.battery.lifetimeImportEnergy);
+
+        // status is uint32le (batch 2): words 0x0003 0x0000 => 3.
+        expect(adapter.lastVal('battery.1.status')).to.equal(device.battery.status);
+
+        // maxDischargePeakPower sits at 0xE14A, inside the region batch 2 reads across
+        // the internal gap — it must now decode and publish a state (seeded generically).
+        expect(hasStatePrefix('battery.1.maxDischargePeakPower'), 'gap-spanning def present').to.equal(true);
     });
 });
 

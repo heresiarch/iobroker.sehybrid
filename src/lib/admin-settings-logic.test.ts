@@ -28,7 +28,13 @@
 
 import { expect } from 'chai';
 import { validateConfig } from './config-validation';
-import { getValueDefs, SUNSPEC_MAP } from './sunspec-map';
+import {
+    getBatteryBase,
+    getBatteryValueDefs,
+    getDeviceRegisterAddress,
+    getValueDefs,
+    SUNSPEC_MAP,
+} from './sunspec-map';
 
 // Mirrors Settings.currentConfig(): the shape the form assembles from `native`
 // and hands to validateConfig on every render.
@@ -163,6 +169,71 @@ describe('admin settings logic (task 11.4)', () => {
         it('Req 4.5: an empty map yields no rows (drives the "No SunSpec values available" indication)', () => {
             expect(getValueDefs([])).to.deep.equal([]);
             expect(getValueDefs([]).length).to.equal(0);
+        });
+    });
+
+    // ---------------------------------------------------------------------
+    // Battery value table backing data (task 20.2, Req 4.1, 4.2, 4.3).
+    // The "Battery values (N)" accordion renders one row per getBatteryValueDefs()
+    // entry with name/datatype/model, and its Register column is computed as
+    // getDeviceRegisterAddress(getBatteryBase(1), def) — the battery.1 absolute
+    // address. These assertions mirror that backing data exactly.
+    // ---------------------------------------------------------------------
+    describe('battery value table backing data (Req 4.1, 4.2, 4.3)', () => {
+        // The datatype set the map/decoder actually uses (SunSpecDatatype union).
+        const KNOWN_DATATYPES = new Set([
+            'int16',
+            'uint16',
+            'int32',
+            'uint32',
+            'acc32',
+            'float32',
+            'float32le',
+            'uint32le',
+            'uint64',
+            'uint64le',
+            'sunssf',
+            'string',
+        ]);
+
+        it('Req 4.1/4.2: getBatteryValueDefs() yields battery rows with name, known datatype, model "battery"', () => {
+            const defs = getBatteryValueDefs();
+            expect(defs.length).to.be.greaterThan(0);
+            for (const def of defs) {
+                expect(def.name, 'name column').to.be.a('string').and.not.equal('');
+                expect(KNOWN_DATATYPES.has(def.datatype), `known datatype: ${def.datatype}`).to.equal(true);
+                expect(def.model, 'model column').to.equal('battery');
+            }
+        });
+
+        it('Req 4.3: battery value defs exclude identity/event-log (info) rows', () => {
+            const defs = getBatteryValueDefs();
+            expect(defs.every(d => d.role !== 'info')).to.equal(true);
+            // Identity strings and event logs are info rows and must not leak in.
+            const names = defs.map(d => d.name);
+            for (const excluded of ['c_manufacturer', 'c_serialnumber', 'eventLog', 'eventLogInternal']) {
+                expect(names, `excludes ${excluded}`).to.not.include(excluded);
+            }
+        });
+
+        it('Req 4.1: battery value defs include the key measurements soh/soe/status/instantaneousPower', () => {
+            const names = getBatteryValueDefs().map(d => d.name);
+            for (const expected of ['soh', 'soe', 'status', 'instantaneousPower']) {
+                expect(names, `includes ${expected}`).to.include(expected);
+            }
+        });
+
+        it('Req 4.2: Register-column address == 0xE100 + def.offset for a sampled def (battery.1 base)', () => {
+            const defs = getBatteryValueDefs();
+            const base = getBatteryBase(1);
+            expect(base).to.equal(0xe100);
+            // Sample a representative def (soh) and mirror the component's mapper.
+            const sample = defs.find(d => d.name === 'soh') ?? defs[0];
+            expect(getDeviceRegisterAddress(base, sample)).to.equal(0xe100 + sample.offset);
+            // Hold for every battery row to be safe.
+            for (const def of defs) {
+                expect(getDeviceRegisterAddress(base, def)).to.equal(0xe100 + def.offset);
+            }
         });
     });
 });

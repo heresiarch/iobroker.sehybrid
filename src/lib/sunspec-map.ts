@@ -27,6 +27,7 @@ export type SunSpecRole =
     | 'frequency'
     | 'energy'
     | 'temperature'
+    | 'percent'
     | 'status'
     | 'info';
 
@@ -34,8 +35,8 @@ export type SunSpecRole =
 export interface SunSpecRegisterDef {
     /** Stable key used as the ioBroker state id leaf, e.g. "acPower". */
     name: string;
-    /** SunSpec model this value belongs to (Req 4.3). `'common'` = identity block. */
-    model: 101 | 102 | 103 | 201 | 202 | 203 | 204 | 'common';
+    /** SunSpec model this value belongs to (Req 4.3). `'common'` = identity block, `'battery'` = battery block. */
+    model: 101 | 102 | 103 | 201 | 202 | 203 | 204 | 'common' | 'battery';
     /**
      * Register offset in words from the model block base address
      * (base-0 register number minus the block base constant).
@@ -66,6 +67,26 @@ export const INVERTER_BASE = 40069;
  * offsets below are computed relative to this constant.
  */
 export const METER_BASE = 40121;
+
+// -----------------------------------------------------------------------------
+// Device-block bases + per-device word offsets (Req 9, 10)
+// -----------------------------------------------------------------------------
+// A device block pairs a register template (defs expressed as word offsets from a
+// block base) with a per-device word offset and a DID (presence) register. The meter
+// and battery templates are declared once and instantiated per device by adding the
+// slot's offset to the template base. Values are grounded in the SolarEdge technical
+// note and the nmakel/solaredge_modbus reference register maps.
+
+/** Meter DID (presence) register base: meter.1 DID at 40188 (0x9CFC, base-0). */
+export const METER_DID_BASE = 40188;
+/** Per-meter word offsets: meter.1/2/3 at +0 / +174 (0xAE) / +348 (0x15C). */
+export const METER_REGISTER_OFFSETS = [0, 174, 348] as const;
+/** Battery block template base: battery.1 base at 0xE100 (57600, base-0). */
+export const BATTERY_TEMPLATE_BASE = 0xe100;
+/** Battery DID (presence) register base: battery.1 DID at 0xE140 (57664, base-0). */
+export const BATTERY_DID_BASE = 0xe140;
+/** Per-battery word offsets: battery.1/2 at +0 / +256 (0x100). */
+export const BATTERY_REGISTER_OFFSETS = [0, 256] as const;
 
 // NOTE on model tagging for shared blocks:
 // SolarEdge exposes a single register layout that all three inverter models
@@ -1103,4 +1124,420 @@ export function getInverterValueDefs(map: SunSpecRegisterDef[] = SUNSPEC_MAP): S
  */
 export function getMeterValueDefs(map: SunSpecRegisterDef[] = SUNSPEC_MAP): SunSpecRegisterDef[] {
     return getValueDefs(map).filter(def => METER_MODELS.has(def.model));
+}
+
+// -----------------------------------------------------------------------------
+// Battery register template (model 'battery', base 0xE100) — Req 10.1, 10.2, 10.6, 10.7
+// -----------------------------------------------------------------------------
+// Offsets are WORD offsets relative to BATTERY_TEMPLATE_BASE (0xE100), i.e.
+// offset = absAddr - 0xE100. The template is instantiated per battery slot by adding
+// BATTERY_REGISTER_OFFSETS[slot-1] to the base. Battery values are already in
+// engineering units (float32le / uint64) and carry NO scaleFactorRef.
+//
+// The block is NON-CONTIGUOUS (gaps between fields, e.g. 0xE14A..0xE16C); that is fine
+// for the static map. The reader (task 17) reads the whole span and slices by offset.
+//
+// Addresses/datatypes follow the nmakel/solaredge_modbus battery register map. `soh`
+// and `soe` use the `percent` role (unit '%') so they surface as value states, since
+// value states are selected by `role !== 'info'` and `info` would hide them.
+export const BATTERY_MAP: SunSpecRegisterDef[] = [
+    {
+        name: 'c_manufacturer',
+        model: 'battery',
+        offset: 0xe100 - BATTERY_TEMPLATE_BASE,
+        length: 16,
+        datatype: 'string',
+        role: 'info',
+        iobType: 'string',
+        description: 'Battery C_Manufacturer — Manufacturer',
+    },
+    {
+        name: 'c_model',
+        model: 'battery',
+        offset: 0xe110 - BATTERY_TEMPLATE_BASE,
+        length: 16,
+        datatype: 'string',
+        role: 'info',
+        iobType: 'string',
+        description: 'Battery C_Model — Model',
+    },
+    {
+        name: 'c_version',
+        model: 'battery',
+        offset: 0xe120 - BATTERY_TEMPLATE_BASE,
+        length: 16,
+        datatype: 'string',
+        role: 'info',
+        iobType: 'string',
+        description: 'Battery C_Version — Firmware Version',
+    },
+    {
+        name: 'c_serialnumber',
+        model: 'battery',
+        offset: 0xe130 - BATTERY_TEMPLATE_BASE,
+        length: 16,
+        datatype: 'string',
+        role: 'info',
+        iobType: 'string',
+        description: 'Battery C_SerialNumber — Serial Number',
+    },
+    {
+        name: 'c_deviceaddress',
+        model: 'battery',
+        offset: 0xe140 - BATTERY_TEMPLATE_BASE,
+        length: 1,
+        datatype: 'uint16',
+        role: 'info',
+        iobType: 'number',
+        description: 'Battery C_DeviceAddress — Modbus ID',
+    },
+    {
+        name: 'c_sunspec_did',
+        model: 'battery',
+        offset: 0xe141 - BATTERY_TEMPLATE_BASE,
+        length: 1,
+        datatype: 'uint16',
+        role: 'info',
+        iobType: 'number',
+        description: 'Battery C_SunSpec_DID — SunSpec DID',
+    },
+    {
+        name: 'ratedEnergy',
+        model: 'battery',
+        offset: 0xe142 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'Wh',
+        role: 'energy',
+        iobType: 'number',
+        description: 'Battery Rated_Energy — Rated Energy',
+    },
+    {
+        name: 'maxChargeContinuousPower',
+        model: 'battery',
+        offset: 0xe144 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'W',
+        role: 'power',
+        iobType: 'number',
+        description: 'Battery Max_Charge_Continuous_Power — Maximum Charge Continuous Power',
+    },
+    {
+        name: 'maxDischargeContinuousPower',
+        model: 'battery',
+        offset: 0xe146 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'W',
+        role: 'power',
+        iobType: 'number',
+        description: 'Battery Max_Discharge_Continuous_Power — Maximum Discharge Continuous Power',
+    },
+    {
+        name: 'maxChargePeakPower',
+        model: 'battery',
+        offset: 0xe148 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'W',
+        role: 'power',
+        iobType: 'number',
+        description: 'Battery Max_Charge_Peak_Power — Maximum Charge Peak Power',
+    },
+    {
+        name: 'maxDischargePeakPower',
+        model: 'battery',
+        offset: 0xe14a - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'W',
+        role: 'power',
+        iobType: 'number',
+        description: 'Battery Max_Discharge_Peak_Power — Maximum Discharge Peak Power',
+    },
+    {
+        name: 'averageTemperature',
+        model: 'battery',
+        offset: 0xe16c - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: '°C',
+        role: 'temperature',
+        iobType: 'number',
+        description: 'Battery Average_Temperature — Average Temperature',
+    },
+    {
+        name: 'maximumTemperature',
+        model: 'battery',
+        offset: 0xe16e - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: '°C',
+        role: 'temperature',
+        iobType: 'number',
+        description: 'Battery Maximum_Temperature — Maximum Temperature',
+    },
+    {
+        name: 'instantaneousVoltage',
+        model: 'battery',
+        offset: 0xe170 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'V',
+        role: 'voltage',
+        iobType: 'number',
+        description: 'Battery Instantaneous_Voltage — Instantaneous Voltage',
+    },
+    {
+        name: 'instantaneousCurrent',
+        model: 'battery',
+        offset: 0xe172 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'A',
+        role: 'current',
+        iobType: 'number',
+        description: 'Battery Instantaneous_Current — Instantaneous Current',
+    },
+    {
+        name: 'instantaneousPower',
+        model: 'battery',
+        offset: 0xe174 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'W',
+        role: 'power',
+        iobType: 'number',
+        description: 'Battery Instantaneous_Power — Instantaneous Power',
+    },
+    {
+        name: 'lifetimeExportEnergy',
+        model: 'battery',
+        offset: 0xe176 - BATTERY_TEMPLATE_BASE,
+        length: 4,
+        datatype: 'uint64le',
+        unit: 'Wh',
+        role: 'energy',
+        iobType: 'number',
+        description: 'Battery Lifetime_Export_Energy — Total Exported Energy',
+    },
+    {
+        name: 'lifetimeImportEnergy',
+        model: 'battery',
+        offset: 0xe17a - BATTERY_TEMPLATE_BASE,
+        length: 4,
+        datatype: 'uint64le',
+        unit: 'Wh',
+        role: 'energy',
+        iobType: 'number',
+        description: 'Battery Lifetime_Import_Energy — Total Imported Energy',
+    },
+    {
+        name: 'maximumEnergy',
+        model: 'battery',
+        offset: 0xe17e - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'Wh',
+        role: 'energy',
+        iobType: 'number',
+        description: 'Battery Maximum_Energy — Maximum Energy',
+    },
+    {
+        name: 'availableEnergy',
+        model: 'battery',
+        offset: 0xe180 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: 'Wh',
+        role: 'energy',
+        iobType: 'number',
+        description: 'Battery Available_Energy — Available Energy',
+    },
+    {
+        name: 'soh',
+        model: 'battery',
+        offset: 0xe182 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: '%',
+        role: 'percent',
+        iobType: 'number',
+        description: 'Battery SOH — State of Health',
+    },
+    {
+        name: 'soe',
+        model: 'battery',
+        offset: 0xe184 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'float32le',
+        unit: '%',
+        role: 'percent',
+        iobType: 'number',
+        description: 'Battery SOE — State of Energy',
+    },
+    {
+        name: 'status',
+        model: 'battery',
+        offset: 0xe186 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'uint32le',
+        role: 'status',
+        iobType: 'number',
+        description: 'Battery Status — Status (0 Off,1 Standby,2 Init,3 Charge,4 Discharge,5 Fault,6 Idle)',
+    },
+    {
+        name: 'statusInternal',
+        model: 'battery',
+        offset: 0xe188 - BATTERY_TEMPLATE_BASE,
+        length: 2,
+        datatype: 'uint32le',
+        role: 'status',
+        iobType: 'number',
+        description: 'Battery Status_Internal — Internal Status',
+    },
+    {
+        name: 'eventLog',
+        model: 'battery',
+        offset: 0xe18a - BATTERY_TEMPLATE_BASE,
+        length: 1,
+        datatype: 'uint16',
+        role: 'info',
+        iobType: 'number',
+        description: 'Battery Event_Log — Event Log',
+    },
+    {
+        name: 'eventLogInternal',
+        model: 'battery',
+        offset: 0xe192 - BATTERY_TEMPLATE_BASE,
+        length: 1,
+        datatype: 'uint16',
+        role: 'info',
+        iobType: 'number',
+        description: 'Battery Event_Log_Internal — Internal Event Log',
+    },
+];
+
+// -----------------------------------------------------------------------------
+// Per-device address + presence helpers (task 16.2, Req 9.2, 10.2)
+// -----------------------------------------------------------------------------
+
+/**
+ * Absolute base-0 Modbus register address for a def within a device block =
+ * this device's block base address + the def's word offset.
+ *
+ * @param baseAddress - Absolute base-0 address of the device's block.
+ * @param def - Register definition whose word offset is relative to that base.
+ */
+export function getDeviceRegisterAddress(baseAddress: number, def: SunSpecRegisterDef): number {
+    return baseAddress + def.offset;
+}
+
+/**
+ * Absolute base-0 address of a meter slot's block = METER_BASE + the slot's word offset.
+ *
+ * @param slot - 1-based meter slot (1, 2 or 3).
+ */
+export function getMeterBase(slot: 1 | 2 | 3): number {
+    return METER_BASE + METER_REGISTER_OFFSETS[slot - 1];
+}
+
+/**
+ * Absolute base-0 address of a meter slot's DID (presence) register =
+ * METER_DID_BASE + the slot's word offset.
+ *
+ * @param slot - 1-based meter slot (1, 2 or 3).
+ */
+export function getMeterDidAddress(slot: 1 | 2 | 3): number {
+    return METER_DID_BASE + METER_REGISTER_OFFSETS[slot - 1];
+}
+
+/**
+ * Absolute base-0 address of a battery slot's block = BATTERY_TEMPLATE_BASE + the slot's offset.
+ *
+ * @param slot - 1-based battery slot (1 or 2).
+ */
+export function getBatteryBase(slot: 1 | 2): number {
+    return BATTERY_TEMPLATE_BASE + BATTERY_REGISTER_OFFSETS[slot - 1];
+}
+
+/**
+ * Absolute base-0 address of a battery slot's DID (presence) register =
+ * BATTERY_DID_BASE + the slot's word offset.
+ *
+ * @param slot - 1-based battery slot (1 or 2).
+ */
+export function getBatteryDidAddress(slot: 1 | 2): number {
+    return BATTERY_DID_BASE + BATTERY_REGISTER_OFFSETS[slot - 1];
+}
+
+/**
+ * Battery measurement value defs (powers, temps, V/I/P, energies, soh, soe, status,
+ * statusInternal) — excludes identity strings and event logs, which are tagged
+ * `role: 'info'` analogous to {@link getValueDefs}.
+ *
+ * Pure: returns a new array and never mutates the input.
+ *
+ * @param map - Battery register map to filter; defaults to {@link BATTERY_MAP}.
+ */
+export function getBatteryValueDefs(map: SunSpecRegisterDef[] = BATTERY_MAP): SunSpecRegisterDef[] {
+    return map.filter(def => def.role !== 'info');
+}
+
+// -----------------------------------------------------------------------------
+// Battery block read segments (bug fix, verified against a live SolarEdge
+// "Home Battery 48V - 2 modules" at 192.168.178.4:1502).
+// -----------------------------------------------------------------------------
+// Battery read layout — mirrors the nmakel/solaredge_modbus reference library.
+//
+// The battery block is read in two "batches", exactly as the reference library
+// groups its registers (the `batch` field). This is NOT a split at the physical
+// register gap (0xE14B..0xE16B) — batch 2 deliberately spans that gap in a single
+// contiguous read, and the device returns the gap words as padding. The problem
+// with our earlier approach was READ WIDTH: a whole-block 147-word sweep times
+// out, and oddly-sized windows are flaky. Reading the two reference batches
+// (66 words then 82 words) each as one request succeeds on the first try.
+//
+// Verified live (192.168.178.4:1502, unit 1):
+//   read(0xE100, 66)  OK  -> batch 1 (identity + DID)
+//   read(0xE142, 82)  OK  -> batch 2 (spans the 0xE14B..0xE16B gap), status=3, etc.
+//
+// Segments are expressed as WORD offsets relative to BATTERY_TEMPLATE_BASE (0xE100),
+// matching the def offsets in BATTERY_MAP. The reader reads each segment as its own
+// contiguous request and reassembles the words by absolute offset.
+export interface BatterySegment {
+    /** Word offset of the segment start, relative to the battery block base (0xE100). */
+    offset: number;
+    /** Number of 16-bit registers in the segment. */
+    length: number;
+}
+
+/**
+ * The battery read batches (word offsets relative to the battery block base), mirroring
+ * the reference library's register batching.
+ *
+ * Batch 1: offset 0x00 (0xE100), length 66 -> 0xE100..0xE141 (identity strings + DID).
+ * Batch 2: offset 0x42 (0xE142), length 82 -> 0xE142..0xE193 (rated/charge powers,
+ *          temps, instantaneous V/I/P, energies, soh, soe, status). This batch spans
+ *          the unmapped register gap at 0xE14B..0xE16B in one contiguous read, which
+ *          the device serves as padding — do NOT split it there.
+ */
+export const BATTERY_READ_SEGMENTS: readonly BatterySegment[] = [
+    { offset: 0x00, length: 66 }, // 0xE100..0xE141
+    { offset: 0x42, length: 82 }, // 0xE142..0xE193 (spans the 0xE14B..0xE16B gap)
+];
+
+/**
+ * Battery-presence probe register: read this word to decide whether a battery slot is
+ * populated. The reliable presence signal is `c_deviceaddress` at 0xE140 (+0x100 per
+ * slot): a populated slot reports a real Modbus id (e.g. 112) while an absent slot
+ * reads the not-implemented sentinel 255 (0x00FF) or 0xFFFF. The block base word
+ * (0xE100/0xE200) is NOT reliable — on real devices an absent slot 2 still returns a
+ * stale identity word at its base while every other register in the slot times out.
+ *
+ * @param slot - 1-based battery slot (1 or 2).
+ */
+export function getBatteryPresenceAddress(slot: 1 | 2): number {
+    return BATTERY_DID_BASE + BATTERY_REGISTER_OFFSETS[slot - 1];
 }

@@ -8,7 +8,7 @@ import * as utils from '@iobroker/adapter-core';
 
 import { validateConfig } from './lib/config-validation';
 import { DEFAULT_TIMEOUT_MS, ModbusClient } from './lib/modbus-client';
-import { StateManager } from './lib/state-manager';
+import { StateManager, type ChannelPath } from './lib/state-manager';
 import { decodeRegisters } from './lib/sunspec-decode';
 import { COMMON_BASE } from './lib/sunspec-map';
 import { SunSpecReader, type Logger } from './lib/sunspec-reader';
@@ -22,11 +22,12 @@ const MAX_CONSECUTIVE_FAILURES = 10;
 /**
  * SolarEdge SunSpec reader adapter.
  *
- * Read-only Modbus TCP monitor: on start it validates the configuration, ensures the
- * `info.connection` indicator and the `inverter`/`meter` channels exist, then polls
- * the inverter and meter SunSpec blocks on the configured interval. The adapter never
- * issues Modbus write function codes and never subscribes to state changes — it only
- * writes acknowledged values it read from the device.
+ * Read-only Modbus TCP monitor: on start it validates the configuration and ensures the
+ * `info.connection` indicator and the `inverter` channel exist, then polls the inverter
+ * plus every present meter (up to 3) and battery (up to 2) SunSpec block on the
+ * configured interval. Meter/battery channels are created on demand once a slot is
+ * detected. The adapter never issues Modbus write function codes and never subscribes to
+ * state changes — it only writes acknowledged values it read from the device.
  */
 class Sehybrid extends utils.Adapter {
     /** Reused Modbus client; reconnected by {@link pollOnce} after a failed cycle. */
@@ -106,9 +107,10 @@ class Sehybrid extends utils.Adapter {
         this.stateManager = new StateManager(this);
         this.modbusClient = new ModbusClient();
 
-        // Group states into the two channels up front (idempotent) (Req 6.9).
+        // Ensure the fixed inverter channel up front (idempotent) (Req 6.9). Meter and
+        // battery channels are created on demand per detected device during a cycle,
+        // since which slots exist is only known after probing the device (Req 9.3, 10.5).
         await this.stateManager.ensureChannel('inverter');
-        await this.stateManager.ensureChannel('meter');
 
         this.log.info(
             `Starting SunSpec polling of ${this.config.host}:${this.config.port} (unit ${this.config.unitId}) every ${this.config.pollInterval}s`,
@@ -122,10 +124,12 @@ class Sehybrid extends utils.Adapter {
     }
 
     /**
-     * Run one polling cycle: (re)connect if needed, detect + read the inverter and
-     * meter blocks, and write acknowledged values. Sets `info.connection` true on a
-     * successful cycle and false on any thrown error, retaining the last values on
-     * failure (Req 3.3, 3.4, 5.4, 5.6, 6.8, 7.2, 7.3, 7.5, 8.2, 8.3, 8.5).
+     * Run one polling cycle: (re)connect if needed, detect + read the inverter block,
+     * then every present meter (up to 3) and battery (up to 2) slot, and write
+     * acknowledged values. Sets `info.connection` true on a successful cycle and false on
+     * any thrown error, retaining the last values on failure. `info.connection` reflects
+     * the inverter read succeeding; the absence of a meter/battery slot is not a failure
+     * (Req 3.3, 3.4, 5.4, 5.6, 6.8, 7.2, 7.3, 7.5, 8.2, 8.3, 8.5, 9.3, 9.4, 10.5, 10.9).
      */
     private async pollOnce(): Promise<void> {
         // Overlap guard: if the previous cycle is still running, skip this tick (Req 5.5).
@@ -165,18 +169,39 @@ class Sehybrid extends utils.Adapter {
                 this.log.debug(`Wrote ${inverterValues.length} inverter value(s) (model ${inverterModel})`);
             }
 
-            // --- Meter block (Req 3.4) ----------------------------------------------
-            // A system may legitimately have no meter, so a missing meter block is a
-            // warning (already logged by the reader) and never fails the cycle.
-            const meterModel = await reader.detectMeterModel(client);
-            if (meterModel === null) {
-                this.log.warn('No meter SunSpec block detected this cycle; continuing without meter values');
-            } else {
-                const meterValues = await reader.readMeter(client, meterModel);
-                for (const { def, value } of meterValues) {
-                    await stateManager.writeValue('meter', def, value);
+            // --- Meter blocks (Req 9.3, 9.4) ----------------------------------------
+            // Probe meter slots 1..3; a system may legitimately have no meter, so an
+            // absent slot is simply skipped and never fails the cycle. Channels are
+            // created on demand for each detected slot.
+            const meters = await reader.detectMeters(client);
+            for (const meter of meters) {
+                const channel = `meter.${meter.index}` as ChannelPath;
+                await stateManager.ensureChannel(channel);
+                const values = await reader.readMeterSlot(client, meter);
+                for (const { def, value } of values) {
+                    await stateManager.writeValue(channel, def, value);
                 }
-                this.log.debug(`Wrote ${meterValues.length} meter value(s) (model ${meterModel})`);
+                this.log.debug(`Wrote ${values.length} value(s) for meter.${meter.index} (model ${meter.model})`);
+            }
+            if (meters.length === 0) {
+                this.log.debug('No meters detected this cycle');
+            }
+
+            // --- Battery blocks (Req 10.5, 10.9) ------------------------------------
+            // Probe battery slots 1..2; an absent slot is skipped and never fails the
+            // cycle. Channels are created on demand for each detected slot.
+            const batteries = await reader.detectBatteries(client);
+            for (const battery of batteries) {
+                const channel = `battery.${battery.index}` as ChannelPath;
+                await stateManager.ensureChannel(channel);
+                const values = await reader.readBatterySlot(client, battery);
+                for (const { def, value } of values) {
+                    await stateManager.writeValue(channel, def, value);
+                }
+                this.log.debug(`Wrote ${values.length} value(s) for battery.${battery.index}`);
+            }
+            if (batteries.length === 0) {
+                this.log.debug('No batteries detected this cycle');
             }
 
             // Cycle completed without throwing: connection is up (Req 7.2, 7.5).

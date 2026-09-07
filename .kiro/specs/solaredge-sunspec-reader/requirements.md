@@ -2,11 +2,11 @@
 
 ## Introduction
 
-This feature adds read-only monitoring of SolarEdge hybrid inverters to the `sehybrid` ioBroker adapter. The adapter connects to a SolarEdge inverter over Modbus TCP and reads SunSpec-encoded register maps for the inverter model (SunSpec models 101/102/103) and the connected meter models (SunSpec models 201–204), as described in the SolarEdge SunSpec implementation technical note (`input/sunspec-implementation-technical-note-10.pdf`).
+This feature adds read-only monitoring of SolarEdge hybrid inverters to the `sehybrid` ioBroker adapter. The adapter connects to a SolarEdge inverter over Modbus TCP and reads SunSpec-encoded register maps for the inverter model (SunSpec models 101/102/103), up to three connected meters (SunSpec models 201–204), and up to two connected batteries. All meter and battery register blocks are hosted on the Inverter's own Modbus map, per the SolarEdge SunSpec implementation technical note (`input/sunspec-implementation-technical-note-10.pdf`) and the `nmakel/solaredge_modbus` reference library (`https://github.com/nmakel/solaredge_modbus`), whose register maps are authoritative for this feature.
 
 The adapter provides connection configuration (host/IP and TCP port) in the admin page, a connection test action, and a reference table listing the readable SunSpec values with their Modbus datatypes. Values are polled on a configurable interval and exposed as acknowledged ioBroker state objects. The adapter maintains the standard `info.connection` indicator and follows ioBroker adapter lifecycle conventions.
 
-This feature is strictly READ-ONLY. No Modbus write operations, export limitation, or storage control behavior is included in this feature, even where the adapter package description mentions such capabilities.
+This feature is strictly READ-ONLY. No Modbus write operations, export limitation, or storage control behavior is included in this feature, even where the adapter package description mentions such capabilities. Control and write registers (for example export limitation and storage/battery control) remain out of scope for this feature.
 
 ## Glossary
 
@@ -25,6 +25,9 @@ This feature is strictly READ-ONLY. No Modbus write operations, export limitatio
 - **State_Object**: An ioBroker object of type `state` created by the Adapter to hold a polled SunSpec value.
 - **Connection_Indicator**: The `info.connection` State_Object of type boolean that reflects current Modbus connectivity.
 - **Meter_Base_Address**: The base-0 Modbus register at which a specific meter's SunSpec block begins (40121 for the 1st meter, 40295 for the 2nd, 40469 for the 3rd).
+- **Meter_Device**: One of up to three kWh meters hosted on the Inverter, each exposed at its own register block within the meter region (block offsets 0, 0xAE, and 0x15C words from the meter region, with meter DID registers at 0x9CFC, 0x9DAA, and 0x9E59 respectively).
+- **Battery_Device**: One of up to two batteries hosted on the Inverter, each exposed at its own register block (base 0xE100 for battery 1 and 0xE100 + 0x100 for battery 2, with the battery DID register at 0xE140 for battery 1 and 0xE240 for battery 2). Battery values use IEEE-754 float32 with little-endian word order, and some lifetime counters use unsigned 64-bit integers (uint64).
+- **Device_Presence**: Whether a given Meter_Device or Battery_Device is physically connected or enabled, determined by reading its SunSpec DID register. A Meter_Device is present when its DID register value is one of {201, 202, 203, 204}. A Battery_Device is present when its DID register value is not the not-implemented sentinel and not 255.
 
 ## Requirements
 
@@ -140,17 +143,42 @@ This feature is strictly READ-ONLY. No Modbus write operations, export limitatio
 4. IF the adapter instance configuration lacks a host value when the Adapter starts, THEN THE Adapter SHALL log an error indicating the missing host configuration, SHALL set the Connection_Indicator to false, and SHALL NOT start any polling cycle.
 5. IF 10 consecutive polling cycles each end in a recoverable error, THEN THE Adapter SHALL set the Connection_Indicator to false and SHALL log an error indicating repeated read failures while continuing to attempt the next polling cycle at the next Polling_Interval.
 
-### Requirement 9: Multiple Meter Support (Optional / Future)
+### Requirement 9: Multiple Meter Support
 
-> Status: Optional / not yet implemented — future enhancement. This requirement is out of scope for the current implementation, which reads only the 1st meter block and exposes it under a single `meter` channel. The exact per-meter channel naming will be decided in the design phase.
-
-**User Story:** As an ioBroker user with more than one meter connected to my SolarEdge inverter, I want the adapter to read every enabled meter, so that I can monitor all of my meters without their values colliding.
+**User Story:** As an ioBroker user with more than one meter connected to my SolarEdge inverter, I want the adapter to read every connected meter, so that I can monitor all of my meters without their values colliding.
 
 #### Acceptance Criteria
 
-1. WHEN a polling cycle runs, THE Adapter SHALL determine the number of enabled meters present, from 0 up to 3 inclusive, by reading the C_SunSpec_DID register located at each Meter_Base_Address plus a fixed offset for the 1st, 2nd, and 3rd meter blocks (Meter_Base_Address values 40121, 40295, and 40469).
-2. WHEN the Adapter reads a meter block's C_SunSpec_DID register and the value equals one of 201, 202, 203, or 204, THE Adapter SHALL treat that meter block as present and enabled and SHALL read its SunSpec meter model register block relative to that meter block's Meter_Base_Address rather than a single hardcoded base address.
-3. WHEN the Adapter reads two or more enabled meter blocks in a polling cycle, THE Adapter SHALL expose each meter block's values under a distinct per-meter channel indexed by the meter block position (for example `meter.1.*`, `meter.2.*`, `meter.3.*`) so that values from different meter blocks do not share State_Objects.
-4. IF a meter block's C_SunSpec_DID register value is not one of 201, 202, 203, or 204 during a polling cycle, THEN THE Adapter SHALL skip that meter slot, SHALL NOT create any State_Object for that meter slot, SHALL log a warning identifying the skipped meter slot position, and SHALL continue processing the remaining meter blocks.
-5. WHEN exactly one enabled meter block is present during a polling cycle, THE Adapter SHALL continue to expose that meter's values in a backward-compatible layout, retaining the State_Objects at the paths used by the single-meter implementation so that existing consumers continue to resolve those State_Objects (the design phase decides whether this is the existing `meter.*` layout or `meter.1.*`).
-6. WHEN the Adapter reads any meter block under this feature, THE Modbus_Client SHALL issue only Modbus read function codes and SHALL NOT issue any Modbus write function code.
+1. WHEN a polling cycle runs, THE Adapter SHALL determine the Device_Presence of up to three Meter_Devices, from 0 up to 3 inclusive, by reading each Meter_Device's SunSpec DID register (located at 0x9CFC for the 1st meter, 0x9DAA for the 2nd meter, and 0x9E59 for the 3rd meter).
+2. WHEN the Adapter reads a Meter_Device's DID register and the value equals one of 201, 202, 203, or 204, THE Adapter SHALL treat that Meter_Device as present and SHALL read its SunSpec meter model register block using that Meter_Device's own per-meter register offset rather than a single hardcoded base address.
+3. WHEN the Adapter reads one or more present Meter_Devices in a polling cycle, THE Adapter SHALL expose each present Meter_Device's values under a distinct channel indexed from 1 by the meter position (`meter.<n>.*`, where `<n>` is 1, 2, or 3) so that values from different Meter_Devices do not share State_Objects.
+4. IF a Meter_Device's DID register value is not one of 201, 202, 203, or 204 during a polling cycle, THEN THE Adapter SHALL skip that meter slot, SHALL NOT create any State_Object for that meter slot, SHALL log a warning identifying the skipped meter slot position, and SHALL continue processing the remaining Meter_Devices.
+5. WHEN the Adapter reads any Meter_Device under this requirement, THE Modbus_Client SHALL issue only Modbus read function codes and SHALL NOT issue any Modbus write function code.
+
+### Requirement 10: Battery Support
+
+**User Story:** As an ioBroker user with one or more batteries connected to my SolarEdge inverter, I want the adapter to read every connected battery, so that I can monitor battery state and energy flows without their values colliding.
+
+#### Acceptance Criteria
+
+1. WHEN a polling cycle runs, THE Adapter SHALL determine the Device_Presence of up to two Battery_Devices by reading each Battery_Device's DID register (located at 0xE140 for the 1st battery and 0xE240 for the 2nd battery), treating a Battery_Device as present when its DID register value is not the not-implemented sentinel and not 255.
+2. WHEN a Battery_Device is present during a polling cycle, THE Adapter SHALL read that Battery_Device's register block, including the manufacturer identity string, model identity string, firmware version identity string, serial number identity string, rated energy, maximum continuous charge power, maximum continuous discharge power, maximum peak charge power, maximum peak discharge power, average temperature, maximum temperature, instantaneous voltage, instantaneous current, instantaneous power, lifetime exported energy counter, lifetime imported energy counter, maximum energy, available energy, state of health, state of energy, status, and internal status.
+3. WHEN the Adapter decodes a battery float32 value, THE Adapter SHALL interpret the register bytes as IEEE-754 float32 using little-endian word order.
+4. WHEN the Adapter decodes a battery lifetime energy counter, THE Adapter SHALL decode the register bytes as an unsigned 64-bit integer.
+5. WHEN the Adapter reads one or more present Battery_Devices in a polling cycle, THE Adapter SHALL expose each present Battery_Device's values under a distinct channel indexed from 1 by the battery position (`battery.<n>.*`, where `<n>` is 1 or 2) so that values from different Battery_Devices do not share State_Objects.
+6. WHEN the Adapter creates a State_Object for a battery value, THE Adapter SHALL set the State_Object `common.role` to a valid ioBroker state role and `common.unit` to the value's physical unit, using V for voltage, A for current, W for power, Wh for energy, °C for temperature, and % for state of health and state of energy.
+7. WHEN the Adapter creates a State_Object for a battery status value or internal status value, THE Adapter SHALL expose that value as an enumerated indicator value.
+8. IF a decoded battery register value equals the SunSpec not-implemented sentinel for its Modbus_Datatype during a polling cycle, THEN THE Adapter SHALL treat the value as unavailable and SHALL NOT write an engineering value to the corresponding State_Object for that polling cycle, consistent with Requirement 3.8.
+9. IF a Battery_Device is not present during a polling cycle, THEN THE Adapter SHALL skip that battery slot, SHALL NOT create any State_Object for that battery slot, SHALL log a warning identifying the skipped battery slot position, and SHALL continue processing the remaining Battery_Devices.
+10. WHEN the Adapter reads any Battery_Device under this requirement, THE Modbus_Client SHALL issue only Modbus read function codes and SHALL NOT issue any Modbus write function code.
+
+### Requirement 11: Device Datatype Support
+
+**User Story:** As an ioBroker user, I want the adapter to decode every Modbus datatype used across the inverter, meter, and battery register maps, so that all values are represented correctly.
+
+#### Acceptance Criteria
+
+1. THE Adapter SHALL support decoding the Modbus_Datatypes int16, uint16, int32, uint32, acc32, float32 with big-endian word order, string, and sunssf.
+2. THE Adapter SHALL support decoding the Modbus_Datatype float32 with little-endian word order, as used by Battery_Device values.
+3. THE Adapter SHALL support decoding the Modbus_Datatype uint64, as used by Battery_Device lifetime energy counters.
+4. WHEN the Adapter decodes a register value, THE Adapter SHALL interpret the register bytes according to the value's declared Modbus_Datatype and word order as defined in the SunSpec_Register_Map.
