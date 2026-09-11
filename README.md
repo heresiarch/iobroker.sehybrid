@@ -172,8 +172,7 @@ also want the backend to auto-restart when you change `src/`. Please refer to th
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-
-### **WORK IN PROGRESS**
+### 0.0.2 (2026-09-11)
 * (René Meyer) initial release
 
 ## License

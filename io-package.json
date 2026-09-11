@@ -1,129 +1,146 @@
 {
-    "common": {
-        "name": "sehybrid",
-        "version": "0.0.1",
-        "news": {
-            "0.0.1": {
-                "en": "initial release",
-                "de": "Erstveröffentlichung",
-                "ru": "Начальная версия",
-                "pt": "lançamento inicial",
-                "nl": "Eerste uitgave",
-                "fr": "Première version",
-                "it": "Versione iniziale",
-                "es": "Versión inicial",
-                "pl": "Pierwsze wydanie",
-                "uk": "Початкова версія",
-                "zh-cn": "首次出版"
-            }
-        },
-        "titleLang": {
-            "en": "Instance settings",
-            "de": "Instanzeinstellungen",
-            "ru": "Настройки экземпляра",
-            "pt": "Configurações de instância",
-            "nl": "Instantie-instellingen",
-            "fr": "Paramètres des instances",
-            "it": "Impostazioni dell'istanza",
-            "es": "Configuración de instancia",
-            "pl": "Ustawienia instancji",
-            "uk": "Налаштування примірника",
-            "zh-cn": "实例设置"
-        },
-        "desc": {
-            "en": "ioBroker adapter for monitoring and controlling SolarEdge hybrid inverters. Provides access to PV, battery, and operational data, with features such as export power limitation and Storage Control modes.",
-            "de": "ioBroker-Adapter zur Überwachung und Steuerung von SolarEdge-Hybridwechselrichtern. Bietet Zugriff auf PV-, Batterie- und Betriebsdaten mit Funktionen wie Exportleistungsbegrenzung und Speichersteuerungsmodi.",
-            "ru": "Адаптер ioBroker для мониторинга и управления гибридными инверторами SolarEdge. Обеспечивает доступ к фотоэлектрическим, аккумуляторным и эксплуатационным данным с такими функциями, как ограничение экспортной мощности и режимы управления хранилищем.",
-            "pt": "Adaptador ioBroker para monitoramento e controle de inversores híbridos SolarEdge. Fornece acesso a dados fotovoltaicos, de bateria e operacionais, com recursos como limitação de energia de exportação e modos de controle de armazenamento.",
-            "nl": "ioBroker-adapter voor het monitoren en besturen van SolarEdge hybride omvormers. Biedt toegang tot PV-, batterij- en operationele gegevens, met functies zoals beperking van exportvermogen en opslagcontrolemodi.",
-            "fr": "Adaptateur ioBroker pour la surveillance et le contrôle des onduleurs hybrides SolarEdge. Fournit un accès aux données PV, à la batterie et aux données opérationnelles, avec des fonctionnalités telles que la limitation de la puissance d'exportation et les modes de contrôle du stockage.",
-            "it": "Adattatore ioBroker per il monitoraggio e il controllo degli inverter ibridi SolarEdge. Fornisce l'accesso a dati operativi, fotovoltaici e batteria, con funzionalità quali la limitazione della potenza di esportazione e le modalità di controllo dello stoccaggio.",
-            "es": "Adaptador ioBroker para monitorización y control de inversores híbridos SolarEdge. Proporciona acceso a datos operativos, de batería y fotovoltaica, con funciones como limitación de energía de exportación y modos de control de almacenamiento.",
-            "pl": "Adapter ioBroker do monitorowania i sterowania falownikami hybrydowymi SolarEdge. Zapewnia dostęp do danych fotowoltaicznych, baterii i danych operacyjnych, z takimi funkcjami, jak ograniczenie mocy eksportu i tryby kontroli przechowywania.",
-            "uk": "Адаптер ioBroker для моніторингу та керування гібридними інверторами SolarEdge. Надає доступ до PV, акумулятора та робочих даних із такими функціями, як обмеження потужності експорту та режими керування зберіганням.",
-            "zh-cn": "ioBroker 适配器，用于监控和控制 SolarEdge 混合逆变器。提供对光伏、电池和运行数据的访问，具有输出功率限制和存储控制模式等功能。"
-        },
-        "authors": ["René Meyer"],
-        "keywords": ["SolarEdge Hybrid Adapter iobroker"],
-        "licenseInformation": {
-            "type": "free",
-            "license": "MIT"
-        },
-        "platform": "Javascript/Node.js",
-        "icon": "sehybrid.png",
-        "enabled": true,
-        "extIcon": "https://raw.githubusercontent.com/heresiarch/ioBroker.sehybrid/main/admin/sehybrid.png",
-        "readme": "https://github.com/heresiarch/ioBroker.sehybrid/blob/main/README.md",
-        "loglevel": "info",
-        "tier": 3,
-        "mode": "daemon",
-        "type": "energy",
-        "compact": true,
-        "messagebox": true,
-        "connectionType": "local",
-        "dataSource": "poll",
-        "adminUI": {
-            "config": "html",
-            "tab": "html"
-        },
-        "adminTab": {
-            "singleton": true,
-            "name": {
-                "en": "Instance settings",
-                "de": "Instanzeinstellungen",
-                "ru": "Настройки экземпляра",
-                "pt": "Configurações de instância",
-                "nl": "Instantie-instellingen",
-                "fr": "Paramètres des instances",
-                "it": "Impostazioni dell'istanza",
-                "es": "Configuración de instancia",
-                "pl": "Ustawienia instancji",
-                "uk": "Налаштування примірника",
-                "zh-cn": "实例设置"
-            },
-            "link": "tab.html"
-        },
-        "supportCustoms": true,
-        "eraseOnUpload": true,
-        "dependencies": [
-            {
-                "js-controller": ">=6.0.11"
-            }
-        ],
-        "globalDependencies": [
-            {
-                "admin": ">=7.0.23"
-            }
-        ]
+  "common": {
+    "name": "sehybrid",
+    "version": "0.0.2",
+    "news": {
+      "0.0.2": {
+        "en": "initial release",
+        "de": "erste Version",
+        "ru": "первоначальный релиз",
+        "pt": "versão inicial",
+        "nl": "eerste uitgave",
+        "fr": "sortie initiale",
+        "it": "prima versione",
+        "es": "versión inicial",
+        "pl": "wstępne wydanie",
+        "uk": "первинний випуск",
+        "zh-cn": "初始版本"
+      },
+      "0.0.1": {
+        "en": "initial release",
+        "de": "Erstveröffentlichung",
+        "ru": "Начальная версия",
+        "pt": "lançamento inicial",
+        "nl": "Eerste uitgave",
+        "fr": "Première version",
+        "it": "Versione iniziale",
+        "es": "Versión inicial",
+        "pl": "Pierwsze wydanie",
+        "uk": "Початкова версія",
+        "zh-cn": "首次出版"
+      }
     },
-    "native": {
-        "host": "",
-        "port": 502,
-        "unitId": 1,
-        "pollInterval": 30
+    "titleLang": {
+      "en": "Instance settings",
+      "de": "Instanzeinstellungen",
+      "ru": "Настройки экземпляра",
+      "pt": "Configurações de instância",
+      "nl": "Instantie-instellingen",
+      "fr": "Paramètres des instances",
+      "it": "Impostazioni dell'istanza",
+      "es": "Configuración de instancia",
+      "pl": "Ustawienia instancji",
+      "uk": "Налаштування примірника",
+      "zh-cn": "实例设置"
     },
-    "objects": [],
-    "instanceObjects": [
-        {
-            "_id": "info",
-            "type": "channel",
-            "common": {
-                "name": "Information"
-            },
-            "native": {}
-        },
-        {
-            "_id": "info.connection",
-            "type": "state",
-            "common": {
-                "role": "indicator.connected",
-                "name": "Device or service connected",
-                "type": "boolean",
-                "read": true,
-                "write": false,
-                "def": false
-            },
-            "native": {}
-        }
+    "desc": {
+      "en": "ioBroker adapter for monitoring and controlling SolarEdge hybrid inverters. Provides access to PV, battery, and operational data, with features such as export power limitation and Storage Control modes.",
+      "de": "ioBroker-Adapter zur Überwachung und Steuerung von SolarEdge-Hybridwechselrichtern. Bietet Zugriff auf PV-, Batterie- und Betriebsdaten mit Funktionen wie Exportleistungsbegrenzung und Speichersteuerungsmodi.",
+      "ru": "Адаптер ioBroker для мониторинга и управления гибридными инверторами SolarEdge. Обеспечивает доступ к фотоэлектрическим, аккумуляторным и эксплуатационным данным с такими функциями, как ограничение экспортной мощности и режимы управления хранилищем.",
+      "pt": "Adaptador ioBroker para monitoramento e controle de inversores híbridos SolarEdge. Fornece acesso a dados fotovoltaicos, de bateria e operacionais, com recursos como limitação de energia de exportação e modos de controle de armazenamento.",
+      "nl": "ioBroker-adapter voor het monitoren en besturen van SolarEdge hybride omvormers. Biedt toegang tot PV-, batterij- en operationele gegevens, met functies zoals beperking van exportvermogen en opslagcontrolemodi.",
+      "fr": "Adaptateur ioBroker pour la surveillance et le contrôle des onduleurs hybrides SolarEdge. Fournit un accès aux données PV, à la batterie et aux données opérationnelles, avec des fonctionnalités telles que la limitation de la puissance d'exportation et les modes de contrôle du stockage.",
+      "it": "Adattatore ioBroker per il monitoraggio e il controllo degli inverter ibridi SolarEdge. Fornisce l'accesso a dati operativi, fotovoltaici e batteria, con funzionalità quali la limitazione della potenza di esportazione e le modalità di controllo dello stoccaggio.",
+      "es": "Adaptador ioBroker para monitorización y control de inversores híbridos SolarEdge. Proporciona acceso a datos operativos, de batería y fotovoltaica, con funciones como limitación de energía de exportación y modos de control de almacenamiento.",
+      "pl": "Adapter ioBroker do monitorowania i sterowania falownikami hybrydowymi SolarEdge. Zapewnia dostęp do danych fotowoltaicznych, baterii i danych operacyjnych, z takimi funkcjami, jak ograniczenie mocy eksportu i tryby kontroli przechowywania.",
+      "uk": "Адаптер ioBroker для моніторингу та керування гібридними інверторами SolarEdge. Надає доступ до PV, акумулятора та робочих даних із такими функціями, як обмеження потужності експорту та режими керування зберіганням.",
+      "zh-cn": "ioBroker 适配器，用于监控和控制 SolarEdge 混合逆变器。提供对光伏、电池和运行数据的访问，具有输出功率限制和存储控制模式等功能。"
+    },
+    "authors": [
+      "René Meyer"
+    ],
+    "keywords": [
+      "SolarEdge Hybrid Adapter iobroker"
+    ],
+    "licenseInformation": {
+      "type": "free",
+      "license": "MIT"
+    },
+    "platform": "Javascript/Node.js",
+    "icon": "sehybrid.png",
+    "enabled": true,
+    "extIcon": "https://raw.githubusercontent.com/heresiarch/ioBroker.sehybrid/main/admin/sehybrid.png",
+    "readme": "https://github.com/heresiarch/ioBroker.sehybrid/blob/main/README.md",
+    "loglevel": "info",
+    "tier": 3,
+    "mode": "daemon",
+    "type": "energy",
+    "compact": true,
+    "messagebox": true,
+    "connectionType": "local",
+    "dataSource": "poll",
+    "adminUI": {
+      "config": "html",
+      "tab": "html"
+    },
+    "adminTab": {
+      "singleton": true,
+      "name": {
+        "en": "Instance settings",
+        "de": "Instanzeinstellungen",
+        "ru": "Настройки экземпляра",
+        "pt": "Configurações de instância",
+        "nl": "Instantie-instellingen",
+        "fr": "Paramètres des instances",
+        "it": "Impostazioni dell'istanza",
+        "es": "Configuración de instancia",
+        "pl": "Ustawienia instancji",
+        "uk": "Налаштування примірника",
+        "zh-cn": "实例设置"
+      },
+      "link": "tab.html"
+    },
+    "supportCustoms": true,
+    "eraseOnUpload": true,
+    "dependencies": [
+      {
+        "js-controller": ">=6.0.11"
+      }
+    ],
+    "globalDependencies": [
+      {
+        "admin": ">=7.0.23"
+      }
     ]
+  },
+  "native": {
+    "host": "",
+    "port": 502,
+    "unitId": 1,
+    "pollInterval": 30
+  },
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Information"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "role": "indicator.connected",
+        "name": "Device or service connected",
+        "type": "boolean",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    }
+  ]
 }
