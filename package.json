@@ -17,7 +17,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git@github.com:heresiarch/ioBroker.sehybrid.git"
+    "url": "git+https://github.com/heresiarch/ioBroker.sehybrid.git"
   },
   "engines": {
     "node": ">= 22"
