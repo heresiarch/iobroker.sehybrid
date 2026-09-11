@@ -25,6 +25,10 @@ src-admin/build/
 # admin/ is pure build output (generated from src-admin), not committed
 admin/
 
+# build/ is pure TypeScript compile output (generated from src/), not committed.
+# CI rebuilds it and the npm tarball includes it via package.json "files".
+build/
+
 # bundle analyzer output (ANALYZE=1 npm run build in src-admin)
 src-admin/stats.html
 admin/stats.html
