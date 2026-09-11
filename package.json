@@ -56,6 +56,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "postinstall": "npm ci --prefix src-admin || npm install --prefix src-admin",
     "prebuild:ts": "rimraf build",
     "build:ts": "build-adapter ts",
     "watch:ts": "build-adapter ts --watch",

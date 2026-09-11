@@ -7,7 +7,7 @@ import globals from 'globals';
 export default [
     ...config,
     {
-        ignores: ['build/', 'node_modules/', 'vite.config.ts', 'eslint.config.mjs'],
+        ignores: ['build/', 'node_modules/', 'vite.config.ts', 'vite.config.watch.ts', 'eslint.config.mjs'],
     },
     {
         languageOptions: {
