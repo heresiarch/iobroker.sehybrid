@@ -1,6 +1,6 @@
 {
   "name": "iobroker.sehybrid",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "ioBroker adapter for monitoring and controlling SolarEdge hybrid inverters. Provides access to PV, battery, and operational data, with features such as export power limitation and Storage Control modes.",
   "author": {
     "name": "René Meyer"

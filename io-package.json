@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "sehybrid",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "news": {
+      "0.0.3": {
+        "en": "Split documentation into user (README.md) and developer (README_dev.md) guides\nDocumented the alternate Modbus TCP port 1502\nStopped versioning generated build output",
+        "de": "Dokumentation in Benutzer- (README.md) und Entwicklerhandbücher (README_DEV.MD) teilen\nDokumentierte den Modbus TCP-Port 1502\nVersionierung der Build-Ausgabe beendet",
+        "ru": "Разделите документацию на руководства для пользователей (README.md) и разработчиков (README_dev.md)\nДокументировано использование альтернативного TCP-порта Modbus 1502\nПрекращено управление версиями, сгенерированные выходные данные сборки",
+        "pt": "Divida a documentação em guias de usuário e desenvolvedor\nDocumentou a outra porta Modbus TCP 1502\nParou de versionar a saída de build gerada",
+        "nl": "Documentatie opsplitsen in gebruikershandleidingen (README.md) en ontwikkelaarshandleidingen (README_dev.md)\nDe alternatieve Modbus TCP-poort 1502 gedocumenteerd\nGestopt versiebeheer genereerde build-output",
+        "fr": "Répartir la documentation en guides utilisateur (README.md) et développeur (README_DEV.md)\nA documenté le port Modbus TCP alternatif 1502\nArrêt du versionnage généré par le build",
+        "it": "Dividi la documentazione in guide per utente (README.md) e sviluppatore (README_DEV.md)\nHo documentato la porta Modbus TCP 1502 alternativa\nIl controllo delle versioni ha generato output",
+        "es": "Divida la documentación en guías de usuario (README.md) y de desarrollador (README_DEV.md)\nDocumentó el puerto Modbus TCP 1502 alternativo\nDejó de versionar la salida de compilación",
+        "pl": "Podziel dokumentację na podręczniki użytkownika (README.md) i programistów (README_dev.md)\nUdokumentowano alternatywny port Modbus TCP 1502\nZatrzymano wersję generowanych wyników kompilacji",
+        "uk": "Розділіть документацію на посібники користувача (README.md) та розробника (README_dev.md)\nЗадокументований альтернативний порт Modbus TCP 1502\nЗупинено версійне створення вихідних даних збірки",
+        "zh-cn": "将文档拆分为用户 (README.md) 和开发者 (README_dev.md) 指南\n已记录备用 Modbus TCP 端口 1502\n停止版本控制生成的编译输出"
+      },
       "0.0.2": {
         "en": "initial release",
         "de": "erste Version",
