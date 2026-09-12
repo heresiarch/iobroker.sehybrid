@@ -74,6 +74,11 @@ Developers: see [README_dev.md](README_dev.md) for build, test and release instr
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (René Meyer) Split documentation into user (README.md) and developer (README_dev.md) guides
+* (René Meyer) Documented the alternate Modbus TCP port 1502
+* (René Meyer) Stopped versioning generated build output
+
 ### 0.0.2 (2026-09-11)
 * (René Meyer) initial release
 
